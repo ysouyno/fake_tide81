@@ -1,20 +1,38 @@
 // fake_tide81.cpp : This file contains the 'main' function. Program execution begins and ends there.
 //
 
-#include <iostream>
+#include <Windows.h>
 
-int main()
-{
-    std::cout << "Hello World!\n";
+LRESULT __stdcall
+wndproc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
+  if (msg == WM_DESTROY) {
+    PostQuitMessage(0);
+    return 0;
+  }
+  else
+    return DefWindowProcW(hwnd, msg, w, l);
 }
 
-// Run program: Ctrl + F5 or Debug > Start Without Debugging menu
-// Debug program: F5 or Debug > Start Debugging menu
+int __stdcall
+WinMain(HINSTANCE h, HINSTANCE hprev, LPSTR cmdline, int show) {
+  WNDCLASSW wc = { 0 };
+  wc.style = CS_HREDRAW | CS_VREDRAW;
+  wc.lpfnWndProc = wndproc;
+  wc.lpszClassName = L"unknown";
 
-// Tips for Getting Started: 
-//   1. Use the Solution Explorer window to add/manage files
-//   2. Use the Team Explorer window to connect to source control
-//   3. Use the Output window to see build output and other messages
-//   4. Use the Error List window to view errors
-//   5. Go to Project > Add New Item to create new code files, or Project > Add Existing Item to add existing code files to the project
-//   6. In the future, to open this project again, go to File > Open > Project and select the .sln file
+  if (!RegisterClass(&wc))
+    return -1;
+
+  HWND hwnd = CreateWindowW(L"unknown", L"", WS_OVERLAPPEDWINDOW,
+    0, 0, 600, 400, NULL, NULL, h, 0);
+  ShowWindow(hwnd, SW_SHOW);
+  UpdateWindow(hwnd);
+
+  MSG msg;
+  while (GetMessage(&msg, NULL, 0, 0)) {
+    TranslateMessage(&msg);
+    DispatchMessageA(&msg);
+  }
+
+  return (int)msg.wParam;
+}
