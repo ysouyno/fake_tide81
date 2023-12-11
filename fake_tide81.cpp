@@ -2,11 +2,13 @@
 //
 
 #include <Windows.h>
+#include "tide.h"
+#include "scintilla.h"
 
 class TideWindow {
 public:
   TideWindow(HINSTANCE, LPSTR);
-  static void register_class(HINSTANCE h);
+  static void register_class(HINSTANCE);
   static LRESULT __stdcall twnd_proc(HWND, UINT, WPARAM, LPARAM);
   HWND get_wnd() { return hwnd_tide; }
 
@@ -14,8 +16,11 @@ private:
   long wnd_proc(WORD, WPARAM, LPARAM);
 
 private:
+  HINSTANCE m_hinstance;
   static const char* class_name;
   HWND hwnd_tide;
+  HWND hwnd_editor;
+  HWND hwnd_output;
 
   char window_name[MAX_PATH];
 };
@@ -23,7 +28,11 @@ private:
 const char* TideWindow::class_name = NULL;
 
 TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
+  m_hinstance = h;
   hwnd_tide = NULL;
+  hwnd_editor = NULL;
+  hwnd_output = NULL;
+
   window_name[0] = '\0';
 
   int left = 0;
@@ -47,6 +56,31 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
 
 long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
   switch (imsg) {
+  case WM_CREATE:
+    hwnd_editor = CreateWindowA(
+      "Scintilla", "Source",
+      WS_CHILD | WS_VSCROLL | WS_HSCROLL | WS_CLIPCHILDREN,
+      0, 0, 100, 100,
+      hwnd_tide,
+      (HMENU)IDM_SRCWIN,
+      m_hinstance, 0);
+    if (!hwnd_editor)
+      exit(false);
+    ShowWindow(hwnd_editor, SW_SHOWNORMAL);
+    SetFocus(hwnd_editor);
+
+    hwnd_output = CreateWindowA(
+      "Scintilla", "Run",
+      WS_CHILD | WS_VSCROLL | WS_HSCROLL | WS_CLIPCHILDREN,
+      0, 0, 100, 100,
+      hwnd_tide,
+      (HMENU)IDM_RUNWIN,
+      m_hinstance, 0);
+    if (!hwnd_output)
+      exit(false);
+    ShowWindow(hwnd_output, SW_SHOWNORMAL);
+    // TODO
+    break;
   case WM_DESTROY:
     PostQuitMessage(0);
     break;
@@ -101,6 +135,8 @@ int __stdcall WinMain(
   HACCEL h_acc_table = LoadAcceleratorsA(hInstance, "ACCELS");
 
   TideWindow::register_class(hInstance);
+  scintilla_register_classes(hInstance);
+
   TideWindow main_wnd(hInstance, lpCmdLine);
 
   bool going = true;
