@@ -13,6 +13,9 @@ public:
   HWND get_wnd() { return hwnd_tide; }
 
 private:
+  int normalise_split(int);
+  void size_sub_windows();
+
   long wnd_proc(WORD, WPARAM, LPARAM);
 
   LRESULT send_output(UINT, WPARAM wparam = 0, LPARAM lparam = 0);
@@ -62,6 +65,40 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
     exit(false);
 
   ShowWindow(hwnd_tide, SW_SHOWNORMAL);
+}
+
+int TideWindow::normalise_split(int split_pos) {
+  RECT rc_client;
+  GetClientRect(hwnd_tide, &rc_client);
+  int w = rc_client.right - rc_client.left;
+  int h = rc_client.bottom - rc_client.top;
+  if (split_pos < 20)
+    split_pos = 0;
+  if (split_vertical) {
+    if (split_pos > w - height_bar - 20)
+      split_pos = w - height_bar;
+  }
+  else {
+    if (split_pos > h - height_bar - 20)
+      split_pos = h - height_bar;
+  }
+  return split_pos;
+}
+
+void TideWindow::size_sub_windows() {
+  RECT rc_client;
+  GetClientRect(hwnd_tide, &rc_client);
+  int w = rc_client.right - rc_client.left;
+  int h = rc_client.bottom - rc_client.top;
+  height_output = normalise_split(height_output);
+  if (split_vertical) {
+    SetWindowPos(hwnd_editor, 0, 0, 0, w - height_output - height_bar, h - 1, 0);
+    SetWindowPos(hwnd_output, 0, w - height_output, 0, height_output - 1, h - 1, 0);
+  }
+  else {
+    SetWindowPos(hwnd_editor, 0, 0, 0, w - 1, h - height_output - height_bar, 0);
+    SetWindowPos(hwnd_output, 0, 0, h - height_output, w - 1, height_output - 1, 0);
+  }
 }
 
 LRESULT TideWindow::send_output(UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -144,7 +181,16 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
     EndPaint(hwnd_tide, &ps);
     break;
   }
+  case WM_SIZE:
+    size_sub_windows();
+    break;
   case WM_DESTROY:
+    if (hwnd_editor)
+      DestroyWindow(hwnd_editor);
+    hwnd_editor = 0;
+    if (hwnd_output)
+      DestroyWindow(hwnd_output);
+    hwnd_output = 0;
     PostQuitMessage(0);
     break;
   default:
