@@ -15,12 +15,19 @@ public:
 private:
   long wnd_proc(WORD, WPARAM, LPARAM);
 
+  LRESULT send_output(UINT, WPARAM wparam = 0, LPARAM lparam = 0);
+
 private:
   HINSTANCE m_hinstance;
   static const char* class_name;
   HWND hwnd_tide;
   HWND hwnd_editor;
   HWND hwnd_output;
+
+  bool split_vertical;
+  int height_output;
+
+  enum { height_bar = 7 };
 
   char window_name[MAX_PATH];
 };
@@ -32,6 +39,9 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   hwnd_tide = NULL;
   hwnd_editor = NULL;
   hwnd_output = NULL;
+
+  split_vertical = false;
+  height_output = 0;
 
   window_name[0] = '\0';
 
@@ -52,6 +62,10 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
     exit(false);
 
   ShowWindow(hwnd_tide, SW_SHOWNORMAL);
+}
+
+LRESULT TideWindow::send_output(UINT msg, WPARAM wparam, LPARAM lparam) {
+  return SendMessage(hwnd_output, msg, wparam, lparam);
 }
 
 long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
@@ -79,8 +93,57 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
     if (!hwnd_output)
       exit(false);
     ShowWindow(hwnd_output, SW_SHOWNORMAL);
-    // TODO
+    send_output(SCI_SETMARGINWIDTH, 0, 0);
     break;
+  case WM_PAINT: {
+    PAINTSTRUCT ps = { 0 };
+    BeginPaint(hwnd_tide, &ps);
+    RECT rc_client = { 0 };
+    GetClientRect(hwnd_tide, &rc_client);
+    int height_client = rc_client.bottom - rc_client.top;
+    int width_client = rc_client.right - rc_client.left;
+
+    HBRUSH brush_surface = CreateSolidBrush(GetSysColor(COLOR_3DFACE));
+    FillRect(ps.hdc, &rc_client, brush_surface);
+    DeleteObject(brush_surface);
+
+    HPEN pen_hilight = CreatePen(0, 1, GetSysColor(COLOR_3DHILIGHT));
+    HPEN pen_old = (HPEN)SelectObject(ps.hdc, pen_hilight);
+    HPEN pen_shadow = CreatePen(0, 1, GetSysColor(COLOR_3DSHADOW));
+    HPEN pen_dark = CreatePen(0, 1, GetSysColor(COLOR_3DDKSHADOW));
+
+    if (split_vertical) {
+      MoveToEx(ps.hdc, width_client - (height_output + height_bar - 1), 0, 0);
+      LineTo(ps.hdc, width_client - (height_output + height_bar - 1), height_client);
+
+      SelectObject(ps.hdc, pen_shadow);
+      MoveToEx(ps.hdc, width_client - (height_output + 2), 0, 0);
+      LineTo(ps.hdc, width_client - (height_output + 2), height_client);
+
+      SelectObject(ps.hdc, pen_dark);
+      MoveToEx(ps.hdc, width_client - (height_output + 1), 0, 0);
+      LineTo(ps.hdc, width_client - (height_output + 1), height_client);
+    }
+    else {
+      MoveToEx(ps.hdc, 0, height_client - (height_output + height_bar - 1), 0);
+      LineTo(ps.hdc, width_client, height_client - (height_output + height_bar - 1));
+
+      SelectObject(ps.hdc, pen_shadow);
+      MoveToEx(ps.hdc, 0, height_client - (height_output + 2), 0);
+      LineTo(ps.hdc, width_client, height_client - (height_output + 2));
+
+      SelectObject(ps.hdc, pen_dark);
+      MoveToEx(ps.hdc, 0, height_client - (height_output + 1), 0);
+      LineTo(ps.hdc, width_client, height_client - (height_output + 1));
+    }
+
+    SelectObject(ps.hdc, pen_old);
+    DeleteObject(pen_dark);
+    DeleteObject(pen_shadow);
+    DeleteObject(pen_hilight);
+    EndPaint(hwnd_tide, &ps);
+    break;
+  }
   case WM_DESTROY:
     PostQuitMessage(0);
     break;

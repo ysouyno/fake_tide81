@@ -6,18 +6,40 @@ public:
   static LRESULT __stdcall swnd_proc(HWND, UINT, WPARAM, LPARAM);
 
 private:
+  Scintilla();
+
+  void redraw();
+
   long wnd_proc(WORD, WPARAM, LPARAM);
 
 private:
   static HINSTANCE m_hinstance;
   HWND hwnd;
+
+  int sel_margin_width;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
 
+Scintilla::Scintilla() {
+  hwnd = NULL;
+
+  sel_margin_width = 20;
+}
+
+void Scintilla::redraw() {
+  InvalidateRect(hwnd, NULL, FALSE);
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   switch (msg) {
   case WM_CREATE:
+    break;
+  case SCI_SETMARGINWIDTH:
+    if (wparam < 100) {
+      sel_margin_width = wparam;
+    }
+    redraw();
     break;
   default:
     return DefWindowProc(hwnd, msg, wparam, lparam);
