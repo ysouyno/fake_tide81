@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="fake_tide81.cpp">
+    <ClCompile Include="tide.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="scintilla.cpp">

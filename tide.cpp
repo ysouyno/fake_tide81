@@ -1,4 +1,4 @@
-// fake_tide81.cpp : This file contains the 'main' function. Program execution begins and ends there.
+// tide.cpp : This file contains the 'main' function. Program execution begins and ends there.
 //
 
 #include <Windows.h>

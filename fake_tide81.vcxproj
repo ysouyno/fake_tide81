@@ -127,7 +127,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="fake_tide81.cpp" />
+    <ClCompile Include="tide.cpp" />
     <ClCompile Include="scintilla.cpp" />
   </ItemGroup>
   <ItemGroup>
