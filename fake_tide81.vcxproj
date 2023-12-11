@@ -127,10 +127,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="prop_set.cpp" />
     <ClCompile Include="tide.cpp" />
     <ClCompile Include="scintilla.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="prop_set.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="scintilla.h" />
     <ClInclude Include="tide.h" />

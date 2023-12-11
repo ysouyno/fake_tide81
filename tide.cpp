@@ -4,6 +4,24 @@
 #include <Windows.h>
 #include "tide.h"
 #include "scintilla.h"
+#include "prop_set.h"
+
+#pragma warning(disable: 4996)
+
+const char prop_global_filename[] = "TideGlobal.properties";
+
+bool get_default_properties_filename(char* path_default_props, unsigned int len) {
+  GetModuleFileNameA(0, path_default_props, len);
+  char* last_slash = strrchr(path_default_props, '\\');
+  unsigned int name_len = strlen(prop_global_filename);
+  if (last_slash && ((last_slash + 1 - path_default_props + name_len) < len)) {
+    strcpy(last_slash + 1, prop_global_filename);
+    return true;
+  }
+  else {
+    return false;
+  }
+}
 
 class TideWindow {
 public:
@@ -30,7 +48,12 @@ private:
   bool split_vertical;
   int height_output;
 
+  PropSet props_base;
+  PropSet props;
+
   enum { height_bar = 7 };
+
+  void read_global_prop_file();
 
   char window_name[MAX_PATH];
 };
@@ -47,6 +70,10 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   height_output = 0;
 
   window_name[0] = '\0';
+
+  props.super_ps = &props_base;
+
+  read_global_prop_file();
 
   int left = 0;
   int top = 0;
@@ -65,6 +92,13 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
     exit(false);
 
   ShowWindow(hwnd_tide, SW_SHOWNORMAL);
+}
+
+void TideWindow::read_global_prop_file() {
+  char propfile[MAX_PATH] = { 0 };
+  if (get_default_properties_filename(propfile, sizeof(propfile))) {
+    props_base.read(propfile);
+  }
 }
 
 int TideWindow::normalise_split(int split_pos) {
