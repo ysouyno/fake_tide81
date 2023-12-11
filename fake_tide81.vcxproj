@@ -138,6 +138,9 @@
   <ItemGroup>
     <ResourceCompile Include="fake_tide81.rc" />
   </ItemGroup>
+  <ItemGroup>
+    <Image Include="Tide.ico" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
