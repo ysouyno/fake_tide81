@@ -129,12 +129,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="dlog.cpp" />
+    <ClCompile Include="document.cpp" />
     <ClCompile Include="prop_set.cpp" />
     <ClCompile Include="tide.cpp" />
     <ClCompile Include="scintilla.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="dlog.h" />
+    <ClInclude Include="document.h" />
     <ClInclude Include="prop_set.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="scintilla.h" />
