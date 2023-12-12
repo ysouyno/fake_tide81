@@ -80,6 +80,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>Winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -127,11 +128,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="dlog.cpp" />
     <ClCompile Include="prop_set.cpp" />
     <ClCompile Include="tide.cpp" />
     <ClCompile Include="scintilla.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="dlog.h" />
     <ClInclude Include="prop_set.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="scintilla.h" />
