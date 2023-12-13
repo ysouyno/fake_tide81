@@ -67,7 +67,7 @@ public:
 
     font = CreateFontIndirectA(&lf);
     HFONT font_old = (HFONT)SelectObject(hdc, font);
-    // 将 CreateFontIndirectA 新创建的字符选中，调用 GetTextMetricsA，
+    // 将 CreateFontIndirectA 新创建的字体选中，调用 GetTextMetricsA，
     // GetTextExtentPointA 设置类成员（ascent，descent 等）的初始值
     TEXTMETRICA tm;
     GetTextMetricsA(hdc, &tm);
@@ -117,9 +117,28 @@ private:
     SetScrollPos(m_hwnd, SB_VERT, top_line, TRUE);
   }
 
+  int line_from_position(int pos) {
+    return doc.lc.line_from_position(pos);
+  }
+
+  void show_caret_at_current_position() {
+    POINT pt_caret = location_from_position(current_pos);
+    move_caret(pt_caret.x, pt_caret.y);
+  }
+
+  void drop_caret() {
+    if (caret) {
+      HideCaret(m_hwnd);
+      DestroyCaret();
+      caret = false;
+    }
+  }
+
   void create_graphic_objects(HDC);
   void refresh_style_data();
   void set_scroll_bars(LPARAM* plparam = 0, WPARAM wparam = 0);
+  POINT location_from_position(int);
+  void move_caret(int, int);
   void paint();
 
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -139,6 +158,9 @@ private:
   HBRUSH sel_margin;
   COLORREF sel_background;
   HBITMAP bitmap_line_buffer;
+  HBRUSH background_brush;
+  COLORREF background;
+
   int line_height;
   unsigned int max_ascent;
   unsigned int max_descent;
@@ -146,8 +168,10 @@ private:
   unsigned int space_width;
   unsigned int tab_width;
   unsigned int tab_in_chars;
-  HBRUSH background_brush;
-  COLORREF background;
+  int x_offset;
+  int current_pos;
+  bool caret;
+  bool in_overstrike;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -164,6 +188,9 @@ Scintilla::Scintilla() {
   sel_margin = 0;
   sel_background = RGB(0xc0, 0xc0, 0xc0);
   bitmap_line_buffer = NULL;
+  background_brush = 0;
+  background = RGB(0xff, 0xff, 0xff);
+
   line_height = 1;
   max_ascent = 1;
   max_descent = 1;
@@ -171,8 +198,10 @@ Scintilla::Scintilla() {
   space_width = 1;
   tab_width = 1;
   tab_in_chars = 4;
-  background_brush = 0;
-  background = RGB(0xff, 0xff, 0xff);
+  x_offset = 0;
+  current_pos = 0;
+  caret = false;
+  in_overstrike = false;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -262,6 +291,80 @@ void Scintilla::set_scroll_bars(LPARAM* plparam, WPARAM wparam) {
     redraw();
 }
 
+POINT Scintilla::location_from_position(int pos) {
+  doc.set_line_cache();
+  refresh_style_data();
+  POINT pt = { 0 };
+  int line = line_from_position(pos);
+  HDC hdc = GetDC(m_hwnd);
+  HFONT font_old = (HFONT)SelectObject(hdc, styles[0].font);
+  pt.y = (line - top_line) * line_height;
+  int pos_line_start = doc.lc.cache[line];
+  int pos_line_end = doc.lc.cache[line + 1];
+  int xpos = sel_margin_width;
+  for (int i = pos_line_start; i < pos && i <= pos_line_end; ++i) {
+    char ch = doc.char_at(i);
+    int colour = doc.style_at(i) & 31;
+    unsigned int width = 0;
+    SIZE sz;
+    if (ch == '\t') {
+      width = (((xpos + 2 - sel_margin_width) / tab_width) + 1) * tab_width + sel_margin_width - xpos;
+    }
+    else {
+      SelectObject(hdc, styles[colour].font);
+      GetTextExtentPoint32A(hdc, &ch, 1, &sz);
+      width = sz.cx;
+    }
+    xpos += width;
+  }
+  pt.x = xpos;
+  SelectObject(hdc, font_old);
+  ReleaseDC(m_hwnd, hdc);
+  pt.x -= x_offset;
+  return pt;
+}
+
+void Scintilla::move_caret(int x, int y) {
+  RECT rc_client = { 0 };
+  GetClientRect(m_hwnd, &rc_client);
+  POINT pt_top = { x, y };
+  POINT pt_bottom = { x, y + line_height };
+  bool caret_visible = PtInRect(&rc_client, pt_top) || PtInRect(&rc_client, pt_bottom);
+  if (GetFocus() != m_hwnd)
+    caret_visible = false;
+  if (caret) {
+    if (caret_visible) {
+      POINT pt;
+      GetCaretPos(&pt);
+      if (pt.x != x || pt.y != y) {
+        if (in_overstrike) {
+          SetCaretPos(x, y + line_height - 2);
+        }
+        else {
+          SetCaretPos(x, y);
+        }
+      }
+    }
+    else {
+      drop_caret();
+    }
+  }
+  else {
+    if (caret_visible) {
+      if (in_overstrike) {
+        CreateCaret(m_hwnd, 0, ave_char_width - 1, 2);
+        SetCaretPos(x, y + line_height - 2);
+      }
+      else {
+        CreateCaret(m_hwnd, 0, 1, line_height);
+        SetCaretPos(x, y);
+      }
+      ShowCaret(m_hwnd);
+      caret = true;
+    }
+  }
+}
+
 void Scintilla::paint() {
   DWORD dwstart = timeGetTime();
   doc.set_line_cache();
@@ -274,7 +377,7 @@ void Scintilla::paint() {
   }
 
   EndPaint(m_hwnd, &ps);
-  // TODO ShowCaretAtCurrentPosition();
+  show_caret_at_current_position();
   DWORD dwend = timeGetTime();
   dprintf("Scintilla::paint(): %dms\n", dwend - dwstart);
 }
