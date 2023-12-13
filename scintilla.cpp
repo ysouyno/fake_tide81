@@ -134,11 +134,14 @@ private:
     }
   }
 
+  int length() { return doc.get_length(); }
+
   void create_graphic_objects(HDC);
   void refresh_style_data();
   void set_scroll_bars(LPARAM* plparam = 0, WPARAM wparam = 0);
   POINT location_from_position(int);
   void move_caret(int, int);
+  void ensure_markers_size();
   void paint();
 
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -172,6 +175,11 @@ private:
   int current_pos;
   bool caret;
   bool in_overstrike;
+
+  int* markers_set;
+  int len_markers_set;
+
+  int end_styled;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -202,6 +210,11 @@ Scintilla::Scintilla() {
   current_pos = 0;
   caret = false;
   in_overstrike = false;
+
+  markers_set = NULL;
+  len_markers_set = 0;
+
+  end_styled = 0;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -365,6 +378,28 @@ void Scintilla::move_caret(int x, int y) {
   }
 }
 
+void Scintilla::ensure_markers_size() {
+  doc.set_line_cache();
+  if (len_markers_set < lines_total()) {
+    int* new_markers_set = new int[lines_total()];
+    if (new_markers_set) {
+      for (int i = 0; i < lines_total(); ++i) {
+        if (markers_set && i < len_markers_set)
+          new_markers_set[i] = markers_set[i];
+        else
+          new_markers_set[i] = 0;
+      }
+      delete[] markers_set;
+      markers_set = new_markers_set;
+      len_markers_set = lines_total();
+    }
+    else {
+      delete[] markers_set;
+      markers_set = NULL;
+    }
+  }
+}
+
 void Scintilla::paint() {
   DWORD dwstart = timeGetTime();
   doc.set_line_cache();
@@ -375,6 +410,24 @@ void Scintilla::paint() {
   if (!hdc_bitmap) {
     create_graphic_objects(ps.hdc);
   }
+
+  if (markers_set)
+    ensure_markers_size();
+
+  RECT rc_client = { 0 };
+  GetClientRect(m_hwnd, &rc_client);
+
+  int screen_line_paint_first = ps.rcPaint.top / line_height;
+  int line_paint_last = top_line + ps.rcPaint.bottom / line_height;
+  int end_pos_paint = length();
+  if (line_paint_last < doc.lc.lines)
+    end_pos_paint = doc.lc.cache[line_paint_last + 1] - 1;
+  if (end_pos_paint > end_styled) {
+    // Notify container to do some more styling
+    // TODO NotifyStyleNeeded(end_pos_paint);
+  }
+
+  // TODO
 
   EndPaint(m_hwnd, &ps);
   show_caret_at_current_position();
