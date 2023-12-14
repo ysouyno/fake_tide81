@@ -1,10 +1,12 @@
 // tide.cpp : This file contains the 'main' function. Program execution begins and ends there.
 //
 
-#include <Windows.h>
 #include "tide.h"
 #include "scintilla.h"
 #include "prop_set.h"
+#include "dlog.h"
+#include <Windows.h>
+#include <Richedit.h>
 
 #pragma warning(disable: 4996)
 
@@ -31,12 +33,22 @@ public:
   HWND get_wnd() { return hwnd_tide; }
 
 private:
+  void read_global_prop_file();
   int normalise_split(int);
   void size_sub_windows();
-
+  void source_changed();
+  int get_current_line_number();
+  void char_added(char);
+  void command(WPARAM, LPARAM);
   long wnd_proc(WORD, WPARAM, LPARAM);
 
-  LRESULT send_output(UINT, WPARAM wparam = 0, LPARAM lparam = 0);
+  LRESULT send_editor(UINT msg, WPARAM wparam = 0, LPARAM lparam = 0) {
+    return SendMessage(hwnd_editor, msg, wparam, lparam);
+  }
+
+  LRESULT send_output(UINT msg, WPARAM wparam = 0, LPARAM lparam = 0) {
+    return SendMessage(hwnd_output, msg, wparam, lparam);
+  }
 
 private:
   HINSTANCE m_hinstance;
@@ -44,18 +56,14 @@ private:
   HWND hwnd_tide;
   HWND hwnd_editor;
   HWND hwnd_output;
-
   bool split_vertical;
   int height_output;
-
   PropSet props_base;
   PropSet props;
-
   enum { height_bar = 7 };
-
-  void read_global_prop_file();
-
   char window_name[MAX_PATH];
+  bool is_dirty;
+  bool is_built;
 };
 
 const char* TideWindow::class_name = NULL;
@@ -65,13 +73,12 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   hwnd_tide = NULL;
   hwnd_editor = NULL;
   hwnd_output = NULL;
-
   split_vertical = false;
   height_output = 0;
-
   window_name[0] = '\0';
-
   props.super_ps = &props_base;
+  is_dirty = false;
+  is_built = false;
 
   read_global_prop_file();
 
@@ -135,8 +142,82 @@ void TideWindow::size_sub_windows() {
   }
 }
 
-LRESULT TideWindow::send_output(UINT msg, WPARAM wparam, LPARAM lparam) {
-  return SendMessage(hwnd_output, msg, wparam, lparam);
+void TideWindow::source_changed() {
+  is_dirty = true;
+  is_built = false;
+}
+
+int TideWindow::get_current_line_number() {
+  int sel_start = 0;
+  send_editor(EM_EXGETSEL, (WPARAM)&sel_start, 0);
+  return send_editor(EM_LINEFROMCHAR, sel_start);
+}
+
+void TideWindow::char_added(char ch) {
+  int sel_start = 0;
+  int sel_end = 0;
+  send_editor(EM_EXGETSEL, (WPARAM)&sel_start, (LPARAM)&sel_end);
+  if (sel_end == sel_start && sel_start > 0) {
+    char style = (char)send_editor(SCI_GETSTYLEAT, sel_start - 1, 0);
+    if (style == 0) {
+      if (send_editor(SCI_CALLTIPACTIVE)) {
+        if (ch == ')') {
+          send_editor(SCI_CALLTIPCANCEL);
+        }
+        else {
+          // TODO ContinueCallTip();
+        }
+      }
+      else if (send_editor(SCI_AUTOCACTIVE)) {
+        if (ch == '(') {
+          // TODO StartCallTip();
+        }
+        else if (!isalpha(ch)) {
+          send_editor(SCI_AUTOCCANCEL);
+        }
+      }
+      else {
+        if (ch == '.') {
+          // TODO StartAutoComplete();
+        }
+        else if (ch == '(') {
+          // TODO StartCallTip();
+        }
+        else if (ch == '\r' || ch == '\n') {
+          char linebuf[1000] = { 0 };
+          int cur_line = get_current_line_number();
+          int line_length = send_editor(EM_LINELENGTH, cur_line);
+          dprintf("[CR] %d len = %d\n", cur_line, line_length);
+          if (cur_line > 0 && line_length <= 2) {
+            send_editor(EM_GETLINE, cur_line - 1, (LPARAM)linebuf);
+            for (int pos = 0; linebuf[pos]; ++pos) {
+              if (linebuf[pos] != ' ' && linebuf[pos] != '\t')
+                linebuf[pos] = '\0';
+            }
+            send_editor(EM_REPLACESEL, 0, (LPARAM)linebuf);
+          }
+        }
+      }
+    }
+  }
+}
+
+void TideWindow::command(WPARAM wparam, LPARAM lparam) {
+  switch (LOWORD(wparam)) {
+  case IDM_SRCWIN: {
+    int cmd = HIWORD(wparam);
+    if (cmd == EN_CHANGE) {
+      source_changed();
+    }
+    // TODO else if (cmd == SCN_STYLENEEDED)
+    else if (cmd == SCN_CHARADDED) {
+      char_added((char)lparam);
+    }
+    break;
+  }
+  default:
+    break;
+  }
 }
 
 long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
@@ -217,6 +298,9 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
   }
   case WM_SIZE:
     size_sub_windows();
+    break;
+  case WM_COMMAND:
+    command(wparam, lparam);
     break;
   case WM_DESTROY:
     if (hwnd_editor)

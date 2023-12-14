@@ -1,6 +1,8 @@
 #include "scintilla.h"
 #include "document.h"
 #include "dlog.h"
+#include <CommCtrl.h>
+#include <Richedit.h>
 
 #pragma warning(disable: 4996)
 
@@ -158,9 +160,12 @@ private:
   void clear_selection();
   void insert_styled_string(int, char*, int);
   void insert_char(int, char);
+  void insert_string(int, char*);
+  void insert_string(int, char*, int);
   void scroll_to(int);
   void ensure_caret_visible();
   void notify_change();
+  void notify_char(char);
   void add_char(char);
 
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -200,6 +205,8 @@ private:
   int anchor;
   int eol_mode;
   bool is_modified;
+  bool in_call_tip_mode;
+  bool in_auto_complete_mode;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -236,6 +243,8 @@ Scintilla::Scintilla() {
   anchor = 0;
   eol_mode = SC_EOL_CRLF;
   is_modified = false;
+  in_call_tip_mode = false;
+  in_auto_complete_mode = false;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -519,6 +528,24 @@ void Scintilla::insert_char(int pos, char ch) {
   insert_styled_string(pos * 2, chs, 2);
 }
 
+// Insert a null terminated string
+void Scintilla::insert_string(int position, char* s) {
+  insert_string(position, s, strlen(s));
+}
+
+// Insert a string with a length
+void Scintilla::insert_string(int position, char* s, int insert_length) {
+  char* s_with_style = new char[insert_length * 2];
+  if (s_with_style) {
+    for (int i = 0; i < insert_length; ++i) {
+      s_with_style[i * 2] = s[i];
+      s_with_style[i * 2 + 1] = 0;
+    }
+    insert_styled_string(position * 2, s_with_style, insert_length * 2);
+    delete[] s_with_style;
+  }
+}
+
 void Scintilla::scroll_to(int line) {
   if (line < 0)
     line = 0;
@@ -563,6 +590,11 @@ void Scintilla::notify_change() {
     MAKELONG(GetDlgCtrlID(m_hwnd), EN_CHANGE), (LPARAM)m_hwnd);
 }
 
+void Scintilla::notify_char(char ch) {
+  SendMessage(GetParent(m_hwnd), WM_COMMAND,
+    MAKELONG(GetDlgCtrlID(m_hwnd), SCN_CHARADDED), ch);
+}
+
 void Scintilla::add_char(char ch) {
   bool was_selection = current_pos != anchor;
   clear_selection();
@@ -593,7 +625,7 @@ void Scintilla::add_char(char ch) {
   ensure_caret_visible();
   notify_change();
   redraw();
-  // TODO NotifyChar(ch);
+  notify_char(ch);
 }
 
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
@@ -607,6 +639,44 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     if (!iscntrl(wparam & 0xff))
       add_char(wparam & 0xff);
     return 1;
+  case EM_EXGETSEL:
+    if (wparam)
+      *(LPDWORD)wparam = selection_start();
+    if (lparam)
+      *(LPDWORD)lparam = selection_end();
+    return MAKELONG(selection_start(), selection_end());
+  case EM_LINEFROMCHAR:
+    return line_from_position(wparam);
+  case EM_LINELENGTH:
+    doc.set_line_cache();
+    return doc.lc.cache[wparam];
+  case EM_REPLACESEL: {
+    clear_selection();
+    char* replacement = (char*)lparam;
+    insert_string(current_pos, replacement);
+    set_selection(current_pos + strlen(replacement), current_pos + strlen(replacement));
+    notify_change();
+    set_scroll_bars();
+    ensure_caret_visible();
+    redraw();
+    break;
+  }
+  case SCI_GETSTYLEAT:
+    if ((int)wparam >= length())
+      return 0;
+    else
+      return doc.style_at(wparam);
+  case SCI_CALLTIPACTIVE:
+    return in_call_tip_mode;
+  case SCI_CALLTIPCANCEL:
+    // TODO CallTipCancel();
+    break;
+  case SCI_AUTOCACTIVE:
+    return in_auto_complete_mode;
+    break;
+  case SCI_AUTOCCANCEL:
+    // TODO AutoCompleteCancel();
+    break;
   case SCI_SETMARGINWIDTH:
     if (wparam < 100) {
       sel_margin_width = wparam;
@@ -622,6 +692,8 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
 
 void Scintilla::register_class(HINSTANCE h) {
   m_hinstance = h;
+
+  InitCommonControls(); // 现在 TideWindow 可以处理 IDM_SRCWIN 了
 
   WNDCLASSA wc = { 0 };
   wc.style = CS_GLOBALCLASS | CS_HREDRAW | CS_VREDRAW;

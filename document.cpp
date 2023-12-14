@@ -1,6 +1,6 @@
-#include <Windows.h>
 #include "document.h"
 #include "dlog.h"
+#include <Windows.h>
 
 LineCache::LineCache() :
   lines(0), size(grow_size), valid(false) {
