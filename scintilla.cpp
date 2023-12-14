@@ -136,6 +136,15 @@ private:
 
   int length() { return doc.get_length(); }
 
+  int selection_start() { return min(current_pos, anchor); }
+  int selection_end() { return max(current_pos, anchor); }
+  void modified_at(int pos) { if (end_styled > pos) end_styled = pos; }
+
+  void get_text_rect(RECT* prc) { // 获取文本区域的客户区大小
+    GetClientRect(m_hwnd, prc);
+    prc->left += sel_margin_width;
+  }
+
   void create_graphic_objects(HDC);
   void refresh_style_data();
   void set_scroll_bars(LPARAM* plparam = 0, WPARAM wparam = 0);
@@ -143,6 +152,16 @@ private:
   void move_caret(int, int);
   void ensure_markers_size();
   void paint();
+  void invalidate_range(int, int);
+  void set_selection(int, int);
+  void delete_chars(int, int);
+  void clear_selection();
+  void insert_styled_string(int, char*, int);
+  void insert_char(int, char);
+  void scroll_to(int);
+  void ensure_caret_visible();
+  void notify_change();
+  void add_char(char);
 
   long wnd_proc(WORD, WPARAM, LPARAM);
 
@@ -175,11 +194,12 @@ private:
   int current_pos;
   bool caret;
   bool in_overstrike;
-
   int* markers_set;
   int len_markers_set;
-
   int end_styled;
+  int anchor;
+  int eol_mode;
+  bool is_modified;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -210,11 +230,12 @@ Scintilla::Scintilla() {
   current_pos = 0;
   caret = false;
   in_overstrike = false;
-
   markers_set = NULL;
   len_markers_set = 0;
-
   end_styled = 0;
+  anchor = 0;
+  eol_mode = SC_EOL_CRLF;
+  is_modified = false;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -435,6 +456,146 @@ void Scintilla::paint() {
   dprintf("Scintilla::paint(): %dms\n", dwend - dwstart);
 }
 
+void Scintilla::invalidate_range(int start, int end) {
+  int minpos = min(start, end);
+  int maxpos = max(start, end);
+  int minline = line_from_position(minpos);
+  int maxline = line_from_position(maxpos);
+
+  RECT rc_redraw;
+  rc_redraw.left = sel_margin_width;
+  rc_redraw.top = (minline - top_line) * line_height;
+  rc_redraw.right = 32000;
+  // The +1 at end should not be needed but draws bad without
+  rc_redraw.bottom = (maxline - top_line + 1) * line_height;
+  // Ensure rectangle is within 16 bit space
+  rc_redraw.top = clamp(rc_redraw.top, -32000, 32000);
+  rc_redraw.bottom = clamp(rc_redraw.bottom, -32000, 32000);
+  InvalidateRect(m_hwnd, &rc_redraw, FALSE);
+}
+
+void Scintilla::set_selection(int c, int a) {
+  if (current_pos != anchor)
+    invalidate_range(current_pos, anchor);
+  current_pos = c;
+  anchor = a;
+  if (current_pos != anchor)
+    invalidate_range(current_pos, anchor);
+}
+
+// Unlike Undo, Redo, and InsertStyledString, the POS is a cell number not a char number
+void Scintilla::delete_chars(int pos, int len) {
+  // TODO
+}
+
+void Scintilla::clear_selection() {
+  int start_pos = selection_start();
+  unsigned int chars = selection_end() - start_pos;
+  set_selection(start_pos, start_pos);
+  if (0 != chars) {
+    delete_chars(start_pos, chars);
+    notify_change();
+  }
+}
+
+void Scintilla::insert_styled_string(int position, char* s, int insert_length) {
+  if (doc.is_read_only()) {
+    // TODO NotifyModifyAttempt();
+  }
+  if (!doc.is_read_only()) {
+    bool start_save_point = doc.is_save_point();
+    doc.insert_string(position, s, insert_length);
+    if (start_save_point && doc.is_collecting_undo()) {
+      // TODO NotifySavePoint(!start_save_point);
+    }
+    modified_at(position / 2);
+    notify_change();
+    set_scroll_bars();
+  }
+}
+
+void Scintilla::insert_char(int pos, char ch) {
+  char chs[2] = { ch, 0 };
+  insert_styled_string(pos * 2, chs, 2);
+}
+
+void Scintilla::scroll_to(int line) {
+  if (line < 0)
+    line = 0;
+  if (line > max_scroll_pos())
+    line = max_scroll_pos();
+  top_line = clamp(line, 0, max_scroll_pos());
+  set_vert_scroll_from_top_line();
+  redraw();
+}
+
+void Scintilla::ensure_caret_visible() {
+  RECT rc_client = { 0 };
+  get_text_rect(&rc_client);
+  POINT pt = location_from_position(current_pos);
+  POINT pt_bottom_caret = pt;
+  pt_bottom_caret.y += line_height;
+  if (!PtInRect(&rc_client, pt) || !PtInRect(&rc_client, pt_bottom_caret)) {
+    if (pt.y < 0) {
+      top_line += (pt.y / line_height);
+    }
+    else if (pt_bottom_caret.y > rc_client.bottom) {
+      top_line += (pt_bottom_caret.y - rc_client.bottom) / line_height + 1;
+    }
+    scroll_to(top_line);
+    // The 2s here are to ensure the caret is really visible
+    if (pt.x < rc_client.left) {
+      x_offset = x_offset - (rc_client.left - pt.x) - 2;
+    }
+    else if (pt.x > rc_client.right) {
+      x_offset = x_offset + (pt.x - rc_client.right) + 2;
+    }
+    if (x_offset < 0)
+      x_offset = 0;
+    SetScrollPos(m_hwnd, SB_HORZ, x_offset, TRUE);
+    redraw();
+  }
+}
+
+void Scintilla::notify_change() {
+  is_modified = true;
+  SendMessage(GetParent(m_hwnd), WM_COMMAND,
+    MAKELONG(GetDlgCtrlID(m_hwnd), EN_CHANGE), (LPARAM)m_hwnd);
+}
+
+void Scintilla::add_char(char ch) {
+  bool was_selection = current_pos != anchor;
+  clear_selection();
+  if (ch == '\r') {
+    if (eol_mode == SC_EOL_CRLF || eol_mode == SC_EOL_CR)
+      insert_char(current_pos, '\r');
+    set_selection(current_pos + 1, current_pos + 1);
+    if (eol_mode == SC_EOL_CRLF || eol_mode == SC_EOL_LF) {
+      insert_char(current_pos, '\n');
+      set_selection(current_pos + 1, current_pos + 1);
+    }
+    // TODO AutoCompleteCancel();
+    // TODO CallTipCancel();
+  }
+  else {
+    // 这里为什么要删除一个字符，in_overstrike 不是加粗的意思吗？
+    if (in_overstrike && !was_selection) {
+      if (current_pos < (length() - 1)) {
+        char current_ch = doc.char_at(current_pos);
+        if (current_ch != '\r' && current_ch != '\n')
+          delete_chars(current_pos, 1);
+      }
+    }
+    insert_char(current_pos, ch);
+    set_selection(current_pos + 1, current_pos + 1);
+    // TODO if (inAutoCompleteMode) AutoCompleteChanged();
+  }
+  ensure_caret_visible();
+  notify_change();
+  redraw();
+  // TODO NotifyChar(ch);
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   switch (msg) {
   case WM_CREATE:
@@ -442,6 +603,10 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   case WM_PAINT:
     paint();
     break;
+  case WM_CHAR:
+    if (!iscntrl(wparam & 0xff))
+      add_char(wparam & 0xff);
+    return 1;
   case SCI_SETMARGINWIDTH:
     if (wparam < 100) {
       sel_margin_width = wparam;
