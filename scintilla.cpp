@@ -153,6 +153,7 @@ private:
   POINT location_from_position(int);
   void move_caret(int, int);
   void ensure_markers_size();
+  void paint_sel_margin(PAINTSTRUCT*);
   void paint();
   void invalidate_range(int, int);
   void set_selection(int, int);
@@ -166,6 +167,7 @@ private:
   void ensure_caret_visible();
   void notify_change();
   void notify_char(char);
+  void notify_style_needed(int);
   void add_char(char);
 
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -183,10 +185,14 @@ private:
   HDC hdc_bitmap;
   HBITMAP old_bitmap;
   HBRUSH sel_margin;
+  COLORREF sel_foreground;
   COLORREF sel_background;
   HBITMAP bitmap_line_buffer;
   HBRUSH background_brush;
+  HBITMAP bitmap_sel_margin;
+  COLORREF foreground;
   COLORREF background;
+  HBRUSH background_sel;
 
   int line_height;
   unsigned int max_ascent;
@@ -207,6 +213,11 @@ private:
   bool is_modified;
   bool in_call_tip_mode;
   bool in_auto_complete_mode;
+  bool buffered_draw;
+  bool hide_selection;
+  bool selforeset;
+  bool selbackset;
+  bool view_whitespace;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -221,10 +232,14 @@ Scintilla::Scintilla() {
   hdc_bitmap = NULL;
   old_bitmap = NULL;
   sel_margin = 0;
+  sel_foreground = RGB(0xff, 0, 0);
   sel_background = RGB(0xc0, 0xc0, 0xc0);
   bitmap_line_buffer = NULL;
   background_brush = 0;
+  bitmap_sel_margin = NULL;
+  foreground = RGB(0, 0, 0);
   background = RGB(0xff, 0xff, 0xff);
+  background_sel = NULL;
 
   line_height = 1;
   max_ascent = 1;
@@ -245,6 +260,11 @@ Scintilla::Scintilla() {
   is_modified = false;
   in_call_tip_mode = false;
   in_auto_complete_mode = false;
+  buffered_draw = true;
+  hide_selection = false;
+  selforeset = false;
+  selbackset = true;
+  view_whitespace = false;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -430,6 +450,45 @@ void Scintilla::ensure_markers_size() {
   }
 }
 
+void Scintilla::paint_sel_margin(PAINTSTRUCT* pps) {
+  RECT rc_sel_margin = { 0 };
+  GetClientRect(m_hwnd, &rc_sel_margin);
+  rc_sel_margin.right = sel_margin_width;
+
+  RECT rcis = { 0 };
+  BOOL intersects = IntersectRect(&rcis, &(pps->rcPaint), &rc_sel_margin);
+  if (!intersects)
+    return;
+
+  HBITMAP old_bm = NULL;
+  HDC hdc_show = pps->hdc;
+  if (buffered_draw) {
+    if (!bitmap_sel_margin) {
+      bitmap_sel_margin = CreateCompatibleBitmap(pps->hdc,
+        sel_margin_width, rc_sel_margin.bottom - rc_sel_margin.top);
+    }
+    old_bm = (HBITMAP)SelectObject(hdc_bitmap, bitmap_sel_margin);
+    hdc_show = hdc_bitmap;
+  }
+
+  FillRect(hdc_show, &rc_sel_margin, sel_margin);
+
+  if (markers_set) {
+    // TODO
+  }
+
+  if (buffered_draw) {
+    BitBlt(pps->hdc,
+      rc_sel_margin.left,
+      rc_sel_margin.top,
+      rc_sel_margin.right,
+      rc_sel_margin.bottom,
+      hdc_show,
+      0, 0, SRCCOPY);
+    SelectObject(hdc_bitmap, old_bm);
+  }
+}
+
 void Scintilla::paint() {
   DWORD dwstart = timeGetTime();
   doc.set_line_cache();
@@ -454,10 +513,256 @@ void Scintilla::paint() {
     end_pos_paint = doc.lc.cache[line_paint_last + 1] - 1;
   if (end_pos_paint > end_styled) {
     // Notify container to do some more styling
-    // TODO NotifyStyleNeeded(end_pos_paint);
+    notify_style_needed(end_pos_paint);
   }
 
-  // TODO
+  int sty = 0;
+  char segment[4000] = { 0 };
+  int xpos = sel_margin_width;
+  int ypos = 0;
+  if (!buffered_draw)
+    ypos += screen_line_paint_first * line_height;
+  int ypos_screen = screen_line_paint_first * line_height;
+
+  int sel_start = selection_start();
+  int sel_end = selection_end();
+
+  paint_sel_margin(&ps);
+
+  if (ps.rcPaint.right > sel_margin_width) {
+    HDC hdc_show = ps.hdc;
+    if (buffered_draw) {
+      SelectObject(hdc_bitmap, bitmap_sel_margin);
+      hdc_show = hdc_bitmap;
+    }
+
+    HFONT font_old = (HFONT)SelectObject(ps.hdc, styles[0].font);
+
+    SelectObject(hdc_bitmap, bitmap_line_buffer);
+    HPEN pen_old = (HPEN)SelectObject(hdc_show, GetStockObject(BLACK_PEN));
+    HBRUSH brush_old = (HBRUSH)SelectObject(hdc_show, background_brush);
+
+    int line = top_line + screen_line_paint_first;
+
+    // Remove selection margin from drawing area so text will not be drawn
+    // on it in unbuffered mode.
+    IntersectClipRect(ps.hdc, sel_margin_width, 0, 32000, 32000);
+
+    while (line < doc.lc.lines && ypos_screen < ps.rcPaint.bottom) {
+      HBRUSH mark_brush = NULL;
+      int marks = 0;
+      COLORREF mark_back = RGB(0, 0, 0);
+      if (markers_set && !sel_margin_width) {
+        marks = markers_set[line];
+        if (marks) {
+          for (int mark_bit = 0; mark_bit < 32 && marks; ++mark_bit) {
+            if (marks & 1) {
+              // TODO mark_back = markers[mark_bit].back;
+            }
+            marks >>= 1;
+          }
+          mark_brush = CreateSolidBrush(mark_back);
+        }
+        marks = markers_set[line];
+      }
+
+      segment[0] = '\0';
+      int seg_pos = 0;
+      int pos_line_start = doc.lc.cache[line];
+      int pos_line_end = doc.lc.cache[line + 1];
+
+      RECT rc_blank;
+      rc_blank.top = ypos;
+      rc_blank.bottom = ypos + line_height;
+
+      bool in_selection = pos_line_start > sel_start && pos_line_end < sel_end;
+
+      SetTextAlign(hdc_show, TA_BASELINE);
+
+      int indicators_set = 0;
+      if (pos_line_start < pos_line_end)
+        indicators_set = doc.style_at(pos_line_start) & INDICS_MASK;
+      int prev_indic = 0;
+      int ind_start[INDIC_MAX] = { 0 };
+      char ch_prev = '\0';
+      bool visible_in_selection = false;
+      int ch = ' ';
+      int colour = 0;
+
+      for (int i = pos_line_start; i <= pos_line_end; ++i) {
+        if (i < pos_line_end) {
+          ch = doc.char_at(i);
+          colour = doc.style_at(i);
+        }
+
+        // If there is the end of a style run for any reason
+        if (colour != sty || ch == '\t' || ch_prev == '\t' || i == sel_start || i == sel_end || i == pos_line_end) {
+          int style_main = sty & 31;
+          SetTextColor(hdc_show, styles[style_main].fore);
+          SetBkColor(hdc_show, styles[style_main].back);
+          if (in_selection && !hide_selection) {
+            if (selbackset)
+              SetBkColor(hdc_show, sel_background);
+            if (selforeset)
+              SetTextColor(hdc_show, sel_foreground);
+            visible_in_selection = true;
+          }
+          else {
+            if (marks)
+              SetBkColor(hdc_show, mark_back);
+          }
+          SelectObject(hdc_show, styles[style_main].font);
+          unsigned int width = 0;
+          if (segment[0] == '\t') {
+            int next_tab = (((xpos + 2 - sel_margin_width) / tab_width) + 1) * tab_width + sel_margin_width;
+            rc_blank.left = xpos - x_offset;
+            rc_blank.right = next_tab - x_offset;
+            if (in_selection && !hide_selection) {
+              if (selbackset)
+                FillRect(hdc_show, &rc_blank, background_sel);
+              else {
+                HBRUSH br_tab = CreateSolidBrush(styles[style_main].back);
+                FillRect(hdc_show, &rc_blank, br_tab);
+                DeleteObject(br_tab);
+              }
+            }
+            else {
+              if (mark_brush) {
+                FillRect(hdc_show, &rc_blank, mark_brush);
+              }
+              else {
+                HBRUSH br_tab = CreateSolidBrush(styles[style_main].back);
+                FillRect(hdc_show, &rc_blank, br_tab);
+                DeleteObject(br_tab);
+              }
+            }
+            if (view_whitespace) {
+              SelectObject(hdc_show, GetStockObject(NULL_BRUSH));
+              SelectObject(hdc_show, GetStockObject(BLACK_PEN));
+              RoundRect(hdc_show,
+                rc_blank.left + 1 - x_offset,
+                rc_blank.top + 4,
+                rc_blank.right - 1 - x_offset,
+                rc_blank.bottom - max_descent,
+                8, 8);
+            }
+            width = next_tab - xpos;
+          }
+          else {
+            SIZE sz;
+            GetTextExtentPoint32A(hdc_show, segment, seg_pos, &sz);
+            RECT rc_show = { 0 };
+            rc_show.left = xpos - x_offset;
+            rc_show.right = xpos + sz.cx - x_offset;
+            if (buffered_draw) {
+              rc_show.top = ypos;
+              rc_show.bottom = ypos + line_height;
+              ExtTextOutA(hdc_show, xpos - x_offset, max_ascent, ETO_OPAQUE, &rc_show, segment, seg_pos, NULL);
+            }
+            else {
+              rc_show.top = ypos;
+              rc_show.bottom = ypos + line_height;
+              ExtTextOutA(hdc_show, xpos - x_offset, ypos + max_ascent, ETO_OPAQUE, &rc_show, segment, seg_pos, NULL);
+            }
+            if (view_whitespace) {
+              SelectObject(hdc_show, GetStockObject(BLACK_PEN));
+              SIZE sz_ch;
+              int xx = xpos;
+              for (int cpos = 0; cpos < seg_pos; ++cpos) {
+                GetTextExtentPoint32A(hdc_show, segment + cpos, 1, &sz_ch);
+                if (segment[cpos] == ' ') {
+                  MoveToEx(hdc_show, xx + sz_ch.cx / 2 - x_offset, ypos + line_height / 2, 0);
+                  LineTo(hdc_show, xx + sz_ch.cx / 2 - x_offset, ypos + line_height / 2 + 1);
+                }
+                xx += sz_ch.cx;
+              }
+            }
+
+            width = sz.cx;
+          }
+          seg_pos = 0;
+          segment[seg_pos] = '\0';
+          xpos += width;
+          sty = colour;
+        }
+
+        if (i == sel_start)
+          in_selection = true;
+
+        if (i == sel_end && i < pos_line_end)
+          in_selection = false;
+
+        if (i == current_pos) {
+          // May need to adjust caret for window to screen
+          // TODO
+        }
+
+        if (i < pos_line_end) { // Do not index onto next line
+          indicators_set = sty & INDICS_MASK;
+        }
+        if (indicators_set != prev_indic) {
+          int mask = INDIC0_MASK;
+          int indicnum = 0;
+          for (indicnum = 0; indicnum <= INDIC_MAX; ++indicnum) {
+            if (indicators_set & mask && !(prev_indic & mask)) {
+              RECT rc_indic = {
+                ind_start[indicnum] - x_offset,
+                ypos + (LONG)max_ascent,
+                xpos - x_offset,
+                ypos + (LONG)max_ascent + 3 };
+              // TODO indicators[indicnum].draw(hdc_show, rc_indic);
+            }
+            mask = mask << 1;
+          }
+          prev_indic = indicators_set;
+        }
+
+        if (ch != '\r' && ch != '\n')
+          segment[seg_pos++] = ch;
+
+        ch_prev = ch;
+      }
+
+      rc_blank.left = xpos - x_offset;
+      rc_blank.right = xpos + ave_char_width - x_offset;
+      if (in_selection && !hide_selection && visible_in_selection && selbackset)
+        FillRect(hdc_show, &rc_blank, background_sel);
+      else if (mark_brush)
+        FillRect(hdc_show, &rc_blank, mark_brush);
+      else
+        FillRect(hdc_show, &rc_blank, background_brush);
+
+      rc_blank.left = xpos + ave_char_width - x_offset;
+      rc_blank.right = rc_client.right;
+      if (mark_brush)
+        FillRect(hdc_show, &rc_blank, mark_brush);
+      else
+        FillRect(hdc_show, &rc_blank, background_brush);
+
+      if (buffered_draw) {
+        BitBlt(ps.hdc, sel_margin_width, ypos_screen, rc_client.right - rc_client.left,
+          line_height + 1, hdc_bitmap, sel_margin_width, 0, SRCCOPY);
+      }
+
+      if (!buffered_draw) {
+        ypos += line_height;
+      }
+
+      ypos_screen += line_height;
+      xpos = sel_margin_width;
+      line++;
+    }
+
+    RECT rc_beyond_eof = rc_client;
+    rc_beyond_eof.left = sel_margin_width;
+    rc_beyond_eof.top = (doc.lc.lines - top_line) * line_height - 1;
+    if (rc_beyond_eof.top < rc_beyond_eof.bottom)
+      FillRect(ps.hdc, &rc_beyond_eof, background_brush);
+
+    SelectObject(hdc_show, pen_old);
+    SelectObject(hdc_show, brush_old);
+    SelectObject(hdc_show, font_old);
+  }
 
   EndPaint(m_hwnd, &ps);
   show_caret_at_current_position();
@@ -595,6 +900,11 @@ void Scintilla::notify_char(char ch) {
     MAKELONG(GetDlgCtrlID(m_hwnd), SCN_CHARADDED), ch);
 }
 
+void Scintilla::notify_style_needed(int end_style_needed) {
+  SendMessage(GetParent(m_hwnd), WM_COMMAND,
+    MAKELONG(GetDlgCtrlID(m_hwnd), SCN_STYLENEEDED), end_style_needed);
+}
+
 void Scintilla::add_char(char ch) {
   bool was_selection = current_pos != anchor;
   clear_selection();
@@ -661,6 +971,16 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     redraw();
     break;
   }
+  case EM_LINEINDEX:
+    doc.set_line_cache();
+    return doc.lc.cache[wparam];
+  case EM_GETTEXTRANGE: {
+    TEXTRANGEA* tr = (TEXTRANGEA*)lparam;
+    int iplace = 0;
+    for (int ichar = tr->chrg.cpMin; ichar <= tr->chrg.cpMax; ++ichar)
+      tr->lpstrText[iplace++] = doc.char_at(ichar);
+    return iplace;
+  }
   case SCI_GETSTYLEAT:
     if ((int)wparam >= length())
       return 0;
@@ -683,6 +1003,8 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     }
     redraw();
     break;
+  case SCI_GETENDSTYLED:
+    return end_styled;
   default:
     return DefWindowProc(m_hwnd, msg, wparam, lparam);
   }

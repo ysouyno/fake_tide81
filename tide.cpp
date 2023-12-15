@@ -39,6 +39,8 @@ private:
   void source_changed();
   int get_current_line_number();
   void char_added(char);
+  void get_range(HWND, int, int, char*);
+  void colourise(int start = 0, int end = -1, bool editor = true);
   void command(WPARAM, LPARAM);
   long wnd_proc(WORD, WPARAM, LPARAM);
 
@@ -202,6 +204,18 @@ void TideWindow::char_added(char ch) {
   }
 }
 
+void TideWindow::get_range(HWND win, int start, int end, char* text) {
+  TEXTRANGEA tr;
+  tr.chrg.cpMin = start;
+  tr.chrg.cpMax = end;
+  tr.lpstrText = text;
+  SendMessage(win, EM_GETTEXTRANGE, 0, (LPARAM)&tr);
+}
+
+void TideWindow::colourise(int start, int end, bool editor) {
+  // TODO
+}
+
 void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   switch (LOWORD(wparam)) {
   case IDM_SRCWIN: {
@@ -209,7 +223,13 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     if (cmd == EN_CHANGE) {
       source_changed();
     }
-    // TODO else if (cmd == SCN_STYLENEEDED)
+    else if (cmd == SCN_STYLENEEDED) {
+      int end_pos_paint = lparam;
+      int end_styled = send_editor(SCI_GETENDSTYLED);
+      int line_end_styled = send_editor(EM_LINEFROMCHAR, end_styled);
+      end_styled = send_editor(EM_LINEINDEX, line_end_styled);
+      colourise(end_styled, end_pos_paint);
+    }
     else if (cmd == SCN_CHARADDED) {
       char_added((char)lparam);
     }
