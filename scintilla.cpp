@@ -939,6 +939,7 @@ void Scintilla::add_char(char ch) {
 }
 
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
+  // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
   case WM_CREATE:
     break;
@@ -949,6 +950,12 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     if (!iscntrl(wparam & 0xff))
       add_char(wparam & 0xff);
     return 1;
+  case WM_KILLFOCUS:
+    drop_caret();
+    break;
+  case WM_SETFOCUS:
+    show_caret_at_current_position();
+    break;
   case EM_EXGETSEL:
     if (wparam)
       *(LPDWORD)wparam = selection_start();
@@ -981,6 +988,10 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
       tr->lpstrText[iplace++] = doc.char_at(ichar);
     return iplace;
   }
+  case EM_HIDESELECTION:
+    hide_selection = wparam;
+    redraw();
+    break;
   case SCI_GETSTYLEAT:
     if ((int)wparam >= length())
       return 0;

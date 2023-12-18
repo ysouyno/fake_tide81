@@ -331,6 +331,10 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
     hwnd_output = 0;
     PostQuitMessage(0);
     break;
+  case WM_ACTIVATEAPP:
+    send_editor(EM_HIDESELECTION, !wparam);
+  case WM_ACTIVATE:
+    SetFocus(hwnd_editor);
   default:
     return DefWindowProc(hwnd_tide, imsg, wparam, lparam);
   }
