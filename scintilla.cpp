@@ -169,6 +169,7 @@ private:
   void notify_char(char);
   void notify_style_needed(int);
   void add_char(char);
+  void drop_graphics();
 
   long wnd_proc(WORD, WPARAM, LPARAM);
 
@@ -938,6 +939,31 @@ void Scintilla::add_char(char ch) {
   notify_char(ch);
 }
 
+void Scintilla::drop_graphics() {
+  drop_caret();
+  if (background_brush)
+    DeleteObject(background_brush);
+  background_brush = 0;
+  if (background_sel)
+    DeleteObject(background_sel);
+  background_sel = 0;
+  if (sel_margin)
+    DeleteObject(sel_margin);
+  sel_margin = 0;
+  if (hdc_bitmap && old_bitmap)
+    SelectObject(hdc_bitmap, old_bitmap);
+  old_bitmap = NULL;
+  if (bitmap_line_buffer)
+    DeleteObject(bitmap_line_buffer);
+  bitmap_line_buffer = NULL;
+  if (bitmap_sel_margin)
+    DeleteObject(bitmap_sel_margin);
+  bitmap_sel_margin = 0;
+  if (hdc_bitmap)
+    DeleteDC(hdc_bitmap);
+  hdc_bitmap = NULL;
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -945,6 +971,10 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case WM_PAINT:
     paint();
+    break;
+  case WM_SIZE:
+    set_scroll_bars(&lparam, wparam);
+    drop_graphics();
     break;
   case WM_CHAR:
     if (!iscntrl(wparam & 0xff))

@@ -5,6 +5,7 @@
 #include "scintilla.h"
 #include "prop_set.h"
 #include "dlog.h"
+#include "comm.h"
 #include <Windows.h>
 #include <Richedit.h>
 
@@ -42,6 +43,7 @@ private:
   void get_range(HWND, int, int, char*);
   void colourise(int start = 0, int end = -1, bool editor = true);
   void command(WPARAM, LPARAM);
+  void move_split(POINT);
   long wnd_proc(WORD, WPARAM, LPARAM);
 
   LRESULT send_editor(UINT msg, WPARAM wparam = 0, LPARAM lparam = 0) {
@@ -66,6 +68,9 @@ private:
   char window_name[MAX_PATH];
   bool is_dirty;
   bool is_built;
+  POINT pt_start_drag;
+  bool captured_mouse;
+  int height_output_start_drag;
 };
 
 const char* TideWindow::class_name = NULL;
@@ -81,6 +86,9 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   props.super_ps = &props_base;
   is_dirty = false;
   is_built = false;
+  pt_start_drag.x = 0;
+  pt_start_drag.y = 0;
+  captured_mouse = false;
 
   read_global_prop_file();
 
@@ -240,6 +248,21 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   }
 }
 
+void TideWindow::move_split(POINT pt_new_drag) {
+  RECT rc_client = { 0 };
+  GetClientRect(hwnd_tide, &rc_client);
+  int new_size_output = height_output_start_drag + (pt_start_drag.y - pt_new_drag.y);
+  if (split_vertical)
+    new_size_output = height_output_start_drag + (pt_start_drag.x - pt_new_drag.x);
+  new_size_output = normalise_split(new_size_output);
+  if (height_output != new_size_output) {
+    height_output = new_size_output;
+    size_sub_windows();
+    InvalidateRect(hwnd_tide, NULL, TRUE);
+    UpdateWindow(hwnd_tide);
+  }
+}
+
 long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
   switch (imsg) {
   case WM_CREATE:
@@ -322,6 +345,27 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
   case WM_COMMAND:
     command(wparam, lparam);
     break;
+  case WM_LBUTTONDOWN:
+    pt_start_drag = point_from_lparam(lparam);
+    captured_mouse = true;
+    height_output_start_drag = height_output;
+    SetCapture(hwnd_tide);
+    dprintf("Click %x %x\n", wparam, lparam);
+    break;
+  case WM_MOUSEMOVE:
+    if (captured_mouse) {
+      POINT pt_new_drag = point_from_lparam(lparam);
+      move_split(pt_new_drag);
+    }
+    break;
+  case WM_LBUTTONUP:
+    if (captured_mouse) {
+      POINT pt_new_drag = point_from_lparam(lparam);
+      move_split(pt_new_drag);
+      captured_mouse = false;
+      ReleaseCapture();
+    }
+    break;
   case WM_DESTROY:
     if (hwnd_editor)
       DestroyWindow(hwnd_editor);
@@ -333,8 +377,10 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
     break;
   case WM_ACTIVATEAPP:
     send_editor(EM_HIDESELECTION, !wparam);
+    break;
   case WM_ACTIVATE:
     SetFocus(hwnd_editor);
+    break;
   default:
     return DefWindowProc(hwnd_tide, imsg, wparam, lparam);
   }
