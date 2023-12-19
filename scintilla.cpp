@@ -6,6 +6,67 @@
 
 #pragma warning(disable: 4996)
 
+#define SCI_NORM 0
+#define SCI_SHIFT SHIFT_PRESSED
+#define SCI_CTRL LEFT_CTRL_PRESSED
+#define SCI_CSHIFT (SCI_CTRL | SCI_SHIFT)
+
+class KeyToCommand {
+public:
+  int key;
+  int modifiers;
+  int msg;
+};
+
+KeyToCommand keymap_default[] = {
+  VK_DOWN, SCI_NORM, SCI_LINEDOWN,
+  VK_DOWN, SCI_SHIFT, SCI_LINEDOWNEXTEND,
+  VK_UP, SCI_NORM, SCI_LINEUP,
+  VK_UP, SCI_SHIFT, SCI_LINEUPEXTEND,
+  VK_LEFT, SCI_NORM, SCI_CHARLEFT,
+  VK_LEFT, SCI_SHIFT, SCI_CHARLEFTEXTEND,
+  VK_LEFT, SCI_CTRL, SCI_WORDLEFT,
+  VK_LEFT, SCI_CSHIFT, SCI_WORDLEFTEXTEND,
+  VK_RIGHT, SCI_NORM, SCI_CHARRIGHT,
+  VK_RIGHT, SCI_SHIFT, SCI_CHARRIGHTEXTEND,
+  VK_RIGHT, SCI_CTRL, SCI_WORDRIGHT,
+  VK_RIGHT, SCI_CSHIFT, SCI_WORDRIGHTEXTEND,
+  VK_HOME, SCI_NORM, SCI_VCHOME,
+  VK_HOME, SCI_SHIFT, SCI_VCHOMEEXTEND,
+  VK_HOME, SCI_CTRL, SCI_DOCUMENTSTART,
+  VK_HOME, SCI_CSHIFT, SCI_DOCUMENTSTARTEXTEND,
+  VK_END,  SCI_NORM, SCI_LINEEND,
+  VK_END,  SCI_SHIFT, SCI_LINEENDEXTEND,
+  VK_END, SCI_CTRL, SCI_DOCUMENTEND,
+  VK_END, SCI_CSHIFT, SCI_DOCUMENTENDEXTEND,
+  VK_PRIOR, SCI_NORM, SCI_PAGEUP,
+  VK_PRIOR, SCI_SHIFT, SCI_PAGEUPEXTEND,
+  VK_NEXT, SCI_NORM, SCI_PAGEDOWN,
+  VK_NEXT, SCI_SHIFT, SCI_PAGEDOWNEXTEND,
+  VK_DELETE, SCI_NORM, WM_CLEAR,
+  VK_DELETE, SCI_SHIFT, WM_CUT,
+  VK_INSERT, SCI_NORM, SCI_EDITTOGGLEOVERTYPE,
+  VK_INSERT, SCI_SHIFT, WM_PASTE,
+  VK_INSERT, SCI_CTRL, WM_COPY,
+  VK_ESCAPE,  SCI_NORM, SCI_CANCEL,
+  VK_BACK, SCI_NORM, SCI_DELETEBACK,
+  'Z', SCI_CTRL, WM_UNDO,
+  'Y', SCI_CTRL, SCI_REDO,
+  'X', SCI_CTRL, WM_CUT,
+  'C', SCI_CTRL, WM_COPY,
+  'V', SCI_CTRL, WM_PASTE,
+  'A', SCI_CTRL, SCI_SELECTALL,
+  VK_TAB, SCI_NORM, SCI_TAB,
+  VK_TAB, SCI_SHIFT, SCI_BACKTAB,
+  VK_RETURN, SCI_NORM, SCI_NEWLINE,
+  'L', SCI_CTRL, SCI_FORMFEED,
+  0,0,0,
+};
+
+bool is_key_down(int virt_key) {
+  return GetKeyState(virt_key) & 0x80000000;
+}
+
 static int clamp(int val, int min_val, int max_val) {
   if (val > max_val)
     val = max_val;
@@ -170,6 +231,12 @@ private:
   void notify_style_needed(int);
   void add_char(char);
   void drop_graphics();
+  bool is_crlf(int);
+  void del_char();
+  void del_char_back();
+  void clear();
+  int key_down(WPARAM, LPARAM);
+  int key_command(WORD);
 
   long wnd_proc(WORD, WPARAM, LPARAM);
 
@@ -800,7 +867,19 @@ void Scintilla::set_selection(int c, int a) {
 
 // Unlike Undo, Redo, and InsertStyledString, the POS is a cell number not a char number
 void Scintilla::delete_chars(int pos, int len) {
-  // TODO
+  if (doc.is_read_only()) {
+    // TODO NotifyModifyAttempt();
+  }
+  if (!doc.is_read_only()) {
+    bool start_save_point = doc.is_save_point();
+    doc.delete_chars(pos * 2, len * 2);
+    if (start_save_point && doc.is_collecting_undo()) {
+      // TODO NotifySavePoint(!startSavePoint);
+    }
+    modified_at(pos);
+    notify_change();
+    set_scroll_bars();
+  }
 }
 
 void Scintilla::clear_selection() {
@@ -964,6 +1043,79 @@ void Scintilla::drop_graphics() {
   hdc_bitmap = NULL;
 }
 
+bool Scintilla::is_crlf(int pos) {
+  if (pos < 0)
+    return false;
+  if (pos >= (length() - 1))
+    return false;
+  return (doc.char_at(pos) == '\r' && doc.char_at(pos + 1) == '\n');
+}
+
+void Scintilla::del_char() {
+  if (is_crlf(current_pos)) {
+    delete_chars(current_pos, 2);
+  }
+  else if (current_pos < length()) {
+    delete_chars(current_pos, 1);
+  }
+  notify_change();
+  redraw();
+}
+
+void Scintilla::del_char_back() {
+  if (current_pos > 0) {
+    if (is_crlf(current_pos - 2)) {
+      delete_chars(current_pos - 2, 2);
+      set_selection(current_pos - 2, current_pos - 2);
+    }
+    else {
+      delete_chars(current_pos - 1, 1);
+      set_selection(current_pos - 1, current_pos - 1);
+    }
+  }
+  notify_change();
+}
+
+void Scintilla::clear() {
+  if (current_pos == anchor) {
+    del_char();
+  }
+  else {
+    clear_selection();
+  }
+  set_selection(current_pos, current_pos);
+  redraw();
+}
+
+int Scintilla::key_down(WPARAM wparam, LPARAM lparam) {
+  KeyToCommand* keymap = keymap_default;
+  bool shift = is_key_down(VK_SHIFT);
+  bool crtl = is_key_down(VK_CONTROL);
+  int modifiers = (shift ? SCI_SHIFT : 0) | (crtl ? SCI_CTRL : 0);
+  for (int key_index = 0; keymap[key_index].key; ++key_index) {
+    if (wparam == keymap[key_index].key && modifiers == keymap[key_index].modifiers) {
+      return wnd_proc(keymap[key_index].msg, 0, 0);
+    }
+  }
+  return 1;
+}
+
+int Scintilla::key_command(WORD msg) {
+  doc.set_line_cache();
+  POINT pt = location_from_position(current_pos);
+  switch (msg) {
+  case SCI_DELETEBACK:
+    del_char_back();
+    if (in_auto_complete_mode) {
+      // TODO AutoCompleteChanged();
+    }
+    // TODO if (inCallTipMode && (posStartCallTip > currentPos)) CallTipCancel();
+    notify_change();
+    break;
+  }
+  return 0;
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -980,11 +1132,19 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     if (!iscntrl(wparam & 0xff))
       add_char(wparam & 0xff);
     return 1;
+  case WM_KEYDOWN:
+    return key_down(wparam, lparam);
+  case WM_KEYUP:
+    break;
   case WM_KILLFOCUS:
     drop_caret();
     break;
   case WM_SETFOCUS:
     show_caret_at_current_position();
+    break;
+  case WM_CLEAR:
+    clear();
+    set_scroll_bars();
     break;
   case EM_EXGETSEL:
     if (wparam)
@@ -1046,6 +1206,8 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case SCI_GETENDSTYLED:
     return end_styled;
+  case SCI_DELETEBACK:
+    return key_command(msg);
   default:
     return DefWindowProc(m_hwnd, msg, wparam, lparam);
   }
