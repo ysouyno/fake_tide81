@@ -131,7 +131,7 @@ public:
     font = CreateFontIndirectA(&lf);
     HFONT font_old = (HFONT)SelectObject(hdc, font);
     // 将 CreateFontIndirectA 新创建的字体选中，调用 GetTextMetricsA，
-    // GetTextExtentPointA 设置类成员（ascent，descent 等）的初始值
+    // GetTextExtentPoint32A 设置类成员（ascent，descent 等）的初始值
     TEXTMETRICA tm;
     GetTextMetricsA(hdc, &tm);
     ascent = tm.tmAscent;
@@ -142,7 +142,7 @@ public:
 
     SIZE sz;
     char ch_space = ' ';
-    GetTextExtentPointA(hdc, &ch_space, 1, &sz);
+    GetTextExtentPoint32A(hdc, &ch_space, 1, &sz);
     space_width = sz.cx;
 
     SelectObject(hdc, font_old);
@@ -357,17 +357,19 @@ void Scintilla::create_graphic_objects(HDC hdc) {
     DeleteObject(pen_sel);
   }
   else {
-    sel_margin = CreateSolidBrush(sel_background);
-
-    RECT rc_client = { 0 };
-    GetClientRect(m_hwnd, &rc_client);
-
-    bitmap_line_buffer = CreateCompatibleBitmap(hdc,
-      rc_client.right - rc_client.left, line_height);
-    SelectObject(hdc_bitmap, bitmap_line_buffer);
-    DeleteObject(sel_map);
-    background_brush = CreateSolidBrush(background);
+    sel_margin = CreateSolidBrush(GetSysColor(COLOR_3DHIGHLIGHT));
   }
+
+  background_sel = CreateSolidBrush(sel_background);
+
+  RECT rc_client = { 0 };
+  GetClientRect(m_hwnd, &rc_client);
+
+  bitmap_line_buffer = CreateCompatibleBitmap(hdc,
+    rc_client.right - rc_client.left, line_height);
+  SelectObject(hdc_bitmap, bitmap_line_buffer);
+  DeleteObject(sel_map);
+  background_brush = CreateSolidBrush(background);
 }
 
 void Scintilla::refresh_style_data() {
@@ -551,7 +553,7 @@ void Scintilla::paint_sel_margin(PAINTSTRUCT* pps) {
       rc_sel_margin.top,
       rc_sel_margin.right,
       rc_sel_margin.bottom,
-      hdc_show,
+      hdc_bitmap,
       0, 0, SRCCOPY);
     SelectObject(hdc_bitmap, old_bm);
   }
@@ -1127,6 +1129,10 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   case WM_SIZE:
     set_scroll_bars(&lparam, wparam);
     drop_graphics();
+    break;
+  case WM_LBUTTONDOWN:
+    SetFocus(m_hwnd);
+    // TODO ButtonDown(wParam, lParam);
     break;
   case WM_CHAR:
     if (!iscntrl(wparam & 0xff))

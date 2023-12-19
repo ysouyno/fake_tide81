@@ -92,10 +92,10 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
 
   read_global_prop_file();
 
-  int left = 0;
-  int top = 0;
-  int width = 600;
-  int height = 400;
+  int left = props.get_int("position.left");
+  int top = props.get_int("position.top");
+  int width = props.get_int("position.width");
+  int height = props.get_int("position.height");
 
   hwnd_tide = CreateWindowExA(WS_EX_CLIENTEDGE, class_name, window_name,
     WS_CAPTION | WS_SYSMENU | WS_THICKFRAME |
