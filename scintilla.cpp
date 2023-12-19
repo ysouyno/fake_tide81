@@ -208,6 +208,13 @@ private:
     prc->left += sel_margin_width;
   }
 
+  POINT make_point(int x, int y) {
+    POINT pt = { x, y };
+    return pt;
+  }
+
+  int clamp_position_into_document(int pos) { return clamp(pos, 0, length()); }
+
   void create_graphic_objects(HDC);
   void refresh_style_data();
   void set_scroll_bars(LPARAM* plparam = 0, WPARAM wparam = 0);
@@ -217,6 +224,7 @@ private:
   void paint_sel_margin(PAINTSTRUCT*);
   void paint();
   void invalidate_range(int, int);
+  void set_selection(int);
   void set_selection(int, int);
   void delete_chars(int, int);
   void clear_selection();
@@ -236,6 +244,9 @@ private:
   void del_char_back();
   void clear();
   int key_down(WPARAM, LPARAM);
+  int position_from_location(POINT);
+  int move_position_outside_char(int, int);
+  int move_position_to(int, bool extend = false);
   int key_command(WORD);
 
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -286,6 +297,8 @@ private:
   bool selforeset;
   bool selbackset;
   bool view_whitespace;
+  int last_x_chosen;
+  int dbcs_code_page;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -333,6 +346,8 @@ Scintilla::Scintilla() {
   selforeset = false;
   selbackset = true;
   view_whitespace = false;
+  last_x_chosen = 0;
+  dbcs_code_page = 0;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -858,6 +873,14 @@ void Scintilla::invalidate_range(int start, int end) {
   InvalidateRect(m_hwnd, &rc_redraw, FALSE);
 }
 
+void Scintilla::set_selection(int c) {
+  if (current_pos != anchor)
+    invalidate_range(current_pos, anchor);
+  current_pos = c;
+  if (current_pos != anchor)
+    invalidate_range(current_pos, anchor);
+}
+
 void Scintilla::set_selection(int c, int a) {
   if (current_pos != anchor)
     invalidate_range(current_pos, anchor);
@@ -1102,10 +1125,140 @@ int Scintilla::key_down(WPARAM wparam, LPARAM lparam) {
   return 1;
 }
 
+int Scintilla::position_from_location(POINT pt) {
+  doc.set_line_cache();
+  pt.x += x_offset;
+  int line = pt.y / line_height + top_line;
+  if (line < 0)
+    return 0;
+  if (line >= doc.lines())
+    return length();
+  int xpos = sel_margin_width;
+  HDC hdc = GetDC(m_hwnd);
+  HFONT font_old = (HFONT)SelectObject(hdc, styles[0].font);
+  int pos_line_start = doc.lc.cache[line];
+  int pos_line_end = doc.lc.cache[line + 1];
+  dprintf("Line position %d is %d - %d\n", line, pos_line_start, pos_line_end);
+  int ret_pos = pos_line_start;
+  for (int i = pos_line_start; i <= pos_line_end && xpos < pt.x && pos_line_end > pos_line_start; ++i) {
+    char ch = doc.char_at(i);
+    int colour = doc.style_at(i) & 31;
+    int width = 0;
+    SIZE sz = { 0 };
+    if (ch == '\t') {
+      width = (((xpos + 2 - sel_margin_width) / tab_width) + 1) * tab_width + sel_margin_width - xpos;
+    }
+    else if (ch == '\r' || ch == '\n') {
+      // stop searching once an end of line character found
+      break;
+    }
+    else {
+      SelectObject(hdc, styles[colour].font);
+      GetTextExtentPoint32A(hdc, &ch, 1, &sz);
+      width = sz.cx;
+    }
+    if ((xpos + width / 2) > pt.x)
+      ret_pos = i;
+    else
+      ret_pos = i + 1;
+
+    xpos += width;
+  }
+
+  SelectObject(hdc, font_old);
+  ReleaseDC(m_hwnd, hdc);
+
+  if (ret_pos > pos_line_end)
+    ret_pos = pos_line_end;
+  if (ret_pos < pos_line_start)
+    ret_pos = pos_line_start;
+  return ret_pos;
+}
+
+// Normalise a position so that it is not halfway through a two byte character.
+// This can occur in two situations -
+// When lines are terminated with \r\n pairs which should be treated as one character.
+// When displaying DBCS text such as Japanese.
+// When moving move in the indicated direction.
+int Scintilla::move_position_outside_char(int pos, int move_dir) {
+  if (pos < 0)
+    return pos;
+  if (pos > length())
+    return pos;
+
+  // Position 0 and length() can not be between any two characters
+  if (pos == 0)
+    return pos;
+  if (pos == length())
+    return pos;
+
+  // Not between CR and LF
+
+  // DBCS support
+  if (dbcs_code_page) {
+    // Anchor DBCS calculations at start of line because start of line can
+    // not be a DBCS trail byte.
+    int start_line = pos;
+    while (start_line > 0 && doc.char_at(start_line) != '\r' && doc.char_at(start_line) != '\n')
+      start_line--;
+    bool at_lead_byte = false;
+    while (start_line < pos) {
+      if (at_lead_byte)
+        at_lead_byte = false;
+      else if (IsDBCSLeadByteEx(dbcs_code_page, doc.char_at(start_line)))
+        at_lead_byte = true;
+      else
+        at_lead_byte = false;
+      start_line++;
+    }
+    if (at_lead_byte) {
+      if (move_dir > 0)
+        return pos + 1;
+      else
+        return pos - 1;
+    }
+  }
+
+  return pos;
+}
+
+int Scintilla::move_position_to(int new_pos, bool extend) {
+  int delta = new_pos - current_pos;
+  new_pos = clamp_position_into_document(new_pos);
+  new_pos = move_position_outside_char(new_pos, delta);
+  if (extend)
+    set_selection(new_pos);
+  else
+    set_selection(new_pos, new_pos);
+  show_caret_at_current_position();
+  ensure_caret_visible();
+  return 0;
+}
+
 int Scintilla::key_command(WORD msg) {
   doc.set_line_cache();
   POINT pt = location_from_position(current_pos);
   switch (msg) {
+  case SCI_LINEDOWN:
+    if (in_auto_complete_mode) {
+      // TODO AutoCompleteMove(1);
+    }
+    else {
+      return move_position_to(position_from_location(make_point(last_x_chosen, pt.y + line_height)));
+    }
+    return 0;
+  case SCI_LINEDOWNEXTEND:
+    return move_position_to(position_from_location(make_point(last_x_chosen, pt.y + line_height)), true);
+  case SCI_LINEUP:
+    if (in_auto_complete_mode) {
+      // TODO AutoCompleteMove(-1);
+    }
+    else {
+      return move_position_to(position_from_location(make_point(last_x_chosen, pt.y - line_height)));
+    }
+    return 0;
+  case SCI_LINEUPEXTEND:
+    return move_position_to(position_from_location(make_point(last_x_chosen, pt.y - line_height)), true);
   case SCI_DELETEBACK:
     del_char_back();
     if (in_auto_complete_mode) {
@@ -1113,6 +1266,18 @@ int Scintilla::key_command(WORD msg) {
     }
     // TODO if (inCallTipMode && (posStartCallTip > currentPos)) CallTipCancel();
     notify_change();
+    break;
+  case SCI_NEWLINE:
+    // TODO AutoCompleteCancel();
+    // TODO CallTipCancel();
+    clear_selection();
+    if (eol_mode == SC_EOL_CRLF || eol_mode == SC_EOL_CR)
+      insert_char(current_pos, '\r');
+    set_selection(current_pos + 1, current_pos + 1);
+    if (eol_mode == SC_EOL_CRLF || eol_mode == SC_EOL_LF) {
+      insert_char(current_pos, '\n');
+      set_selection(current_pos + 1, current_pos + 1);
+    }
     break;
   }
   return 0;
@@ -1212,7 +1377,39 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case SCI_GETENDSTYLED:
     return end_styled;
+  case SCI_LINEDOWN:
+  case SCI_LINEDOWNEXTEND:
+  case SCI_LINEUP:
+  case SCI_LINEUPEXTEND:
+  case SCI_CHARLEFT:
+  case SCI_CHARLEFTEXTEND:
+  case SCI_CHARRIGHT:
+  case SCI_CHARRIGHTEXTEND:
+  case SCI_WORDLEFT:
+  case SCI_WORDLEFTEXTEND:
+  case SCI_WORDRIGHT:
+  case SCI_WORDRIGHTEXTEND:
+  case SCI_HOME:
+  case SCI_HOMEEXTEND:
+  case SCI_LINEEND:
+  case SCI_LINEENDEXTEND:
+  case SCI_DOCUMENTSTART:
+  case SCI_DOCUMENTSTARTEXTEND:
+  case SCI_DOCUMENTEND:
+  case SCI_DOCUMENTENDEXTEND:
+  case SCI_PAGEUP:
+  case SCI_PAGEUPEXTEND:
+  case SCI_PAGEDOWN:
+  case SCI_PAGEDOWNEXTEND:
+  case SCI_EDITTOGGLEOVERTYPE:
+  case SCI_CANCEL:
   case SCI_DELETEBACK:
+  case SCI_TAB:
+  case SCI_BACKTAB:
+  case SCI_NEWLINE:
+  case SCI_FORMFEED:
+  case SCI_VCHOME:
+  case SCI_VCHOMEEXTEND:
     return key_command(msg);
   default:
     return DefWindowProc(m_hwnd, msg, wparam, lparam);
