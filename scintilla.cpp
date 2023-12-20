@@ -258,6 +258,7 @@ private:
   void release();
   int extend_word_select(int, int);
   void button_down(WPARAM, LPARAM);
+  void button_move(LPARAM);
   void button_up(LPARAM);
 
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -1496,6 +1497,41 @@ void Scintilla::button_down(WPARAM wparam, LPARAM lparam) {
   show_caret_at_current_position();
 }
 
+// 按住鼠标左键移动时就可以边移动边选择了
+void Scintilla::button_move(LPARAM lparam) {
+  doc.set_line_cache();
+  if (captured_mouse) {
+    POINT pt = point_from_lparam(lparam);
+    int move_pos = position_from_location(pt);
+    move_pos = move_position_outside_char(move_pos, current_pos - move_pos);
+    if (sel_type == sel_char) {
+      set_selection(move_pos);
+      dprintf("Move: %d - %d\n", anchor, current_pos);
+    }
+    else if (sel_type == sel_word) {
+      if (current_pos > original_anchor_pos) { // Moved forward
+        set_selection(extend_word_select(move_pos, 1),
+          extend_word_select(original_anchor_pos, -1));
+      }
+      else { // Moved backward
+        set_selection(extend_word_select(move_pos, -1),
+          extend_word_select(original_anchor_pos, 1));
+      }
+    }
+    else {
+      // Continue selecting by line
+      int line_move = line_from_location(pt);
+      if (line_anchor < line_move) {
+        set_selection(doc.lc.cache[line_move + 1], doc.lc.cache[line_anchor]);
+      }
+      else {
+        set_selection(doc.lc.cache[line_anchor + 1], doc.lc.cache[line_move]);
+      }
+    }
+    ensure_caret_visible();
+  }
+}
+
 void Scintilla::button_up(LPARAM lparam) {
   if (captured_mouse) {
     POINT pt = point_from_lparam(lparam);
@@ -1527,6 +1563,9 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   case WM_LBUTTONDOWN:
     SetFocus(m_hwnd);
     button_down(wparam, lparam);
+    break;
+  case WM_MOUSEMOVE:
+    button_move(lparam);
     break;
   case WM_LBUTTONUP:
     button_up(lparam);
