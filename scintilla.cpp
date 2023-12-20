@@ -215,6 +215,7 @@ private:
   }
 
   int clamp_position_into_document(int pos) { return clamp(pos, 0, length()); }
+  int line_from_location(POINT pt) { return pt.y / line_height + top_line; }
 
   void create_graphic_objects(HDC);
   void refresh_style_data();
@@ -253,6 +254,11 @@ private:
   int line_end_position(int);
   int vc_home_position(int);
   int key_command(WORD);
+  void capture();
+  void release();
+  int extend_word_select(int, int);
+  void button_down(WPARAM, LPARAM);
+  void button_up(LPARAM);
 
   long wnd_proc(WORD, WPARAM, LPARAM);
 
@@ -304,6 +310,12 @@ private:
   bool view_whitespace;
   int last_x_chosen;
   int dbcs_code_page;
+  bool captured_mouse;
+  unsigned int last_click_time;
+  POINT last_click;
+  enum { sel_char, sel_word, sel_line } sel_type;
+  int original_anchor_pos;
+  int line_anchor = 0;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -353,6 +365,13 @@ Scintilla::Scintilla() {
   view_whitespace = false;
   last_x_chosen = 0;
   dbcs_code_page = 0;
+  captured_mouse = false;
+  last_click_time = 0;
+  last_click.x = 0;
+  last_click.y = 0;
+  sel_type = sel_char;
+  original_anchor_pos = 0;
+  line_anchor = 0;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -1409,6 +1428,90 @@ int Scintilla::key_command(WORD msg) {
   return 0;
 }
 
+void Scintilla::capture() {
+  captured_mouse = true;
+  SetCapture(m_hwnd);
+}
+
+void Scintilla::release() {
+  captured_mouse = false;
+  ReleaseCapture();
+}
+
+int Scintilla::extend_word_select(int pos, int delta) {
+  int new_pos = pos;
+  if (delta < 0) {
+    while (new_pos > 0 && iswordchar(doc.char_at(new_pos - 1)))
+      new_pos--;
+  }
+  else {
+    while (new_pos < (length()) && iswordchar(doc.char_at(new_pos)))
+      new_pos++;
+  }
+  return new_pos;
+}
+
+void Scintilla::button_down(WPARAM wparam, LPARAM lparam) {
+  doc.set_line_cache();
+  // TODO AutoCompleteCancel();
+  // TODO CallTipCancel();
+  POINT pt = point_from_lparam(lparam);
+  capture();
+  // dprintf("Click %x %x\n", wparam, lparam);
+  int new_pos = position_from_location(pt);
+  new_pos = move_position_outside_char(new_pos, current_pos - new_pos);
+  if (wparam & MK_SHIFT)
+    set_selection(new_pos);
+  else
+    set_selection(new_pos, new_pos);
+  if ((GetTickCount() - last_click_time) < GetDoubleClickTime() && pt_close(pt, last_click)) {
+    if (sel_type == sel_char) {
+      sel_type = sel_word;
+      if (current_pos >= original_anchor_pos) { // Moved forward
+        set_selection(extend_word_select(current_pos, 1),
+          extend_word_select(original_anchor_pos, -1));
+      }
+      else { // Moved backward
+        set_selection(extend_word_select(current_pos, -1),
+          extend_word_select(original_anchor_pos, 1));
+      }
+    }
+    else if (sel_type == sel_word) {
+      sel_type = sel_line;
+      line_anchor = line_from_location(pt);
+      set_selection(doc.lc.cache[line_anchor + 1], doc.lc.cache[line_anchor]);
+      dprintf("Triple click: %d - %d\n", anchor, current_pos);
+    }
+    else {
+      sel_type = sel_char;
+      set_selection(current_pos, current_pos);
+    }
+    dprintf("Double click: %d - %d\n", anchor, current_pos);
+  }
+  else {
+    sel_type = sel_char;
+    original_anchor_pos = current_pos;
+  }
+  last_x_chosen = pt.x;
+  show_caret_at_current_position();
+}
+
+void Scintilla::button_up(LPARAM lparam) {
+  if (captured_mouse) {
+    POINT pt = point_from_lparam(lparam);
+    release();
+    if (sel_type == sel_char) {
+      int new_pos = position_from_location(pt);
+      new_pos = move_position_outside_char(new_pos, current_pos - new_pos);
+      set_selection(new_pos);
+      dprintf("Up: %d - %d\n", anchor, current_pos);
+    }
+    last_click_time = GetTickCount();
+    last_click = pt;
+    last_x_chosen = pt.x;
+  }
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -1423,7 +1526,10 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case WM_LBUTTONDOWN:
     SetFocus(m_hwnd);
-    // TODO ButtonDown(wParam, lParam);
+    button_down(wparam, lparam);
+    break;
+  case WM_LBUTTONUP:
+    button_up(lparam);
     break;
   case WM_CHAR:
     if (!iscntrl(wparam & 0xff))

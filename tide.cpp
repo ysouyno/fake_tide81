@@ -350,7 +350,6 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
     captured_mouse = true;
     height_output_start_drag = height_output;
     SetCapture(hwnd_tide);
-    dprintf("Click %x %x\n", wparam, lparam);
     break;
   case WM_MOUSEMOVE:
     if (captured_mouse) {
