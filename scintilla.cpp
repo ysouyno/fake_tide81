@@ -1,6 +1,7 @@
 #include "scintilla.h"
 #include "document.h"
 #include "dlog.h"
+#include "comm.h"
 #include <CommCtrl.h>
 #include <Richedit.h>
 
@@ -247,6 +248,10 @@ private:
   int position_from_location(POINT);
   int move_position_outside_char(int, int);
   int move_position_to(int, bool extend = false);
+  void set_last_x_chosen();
+  int next_word_start(int);
+  int line_end_position(int);
+  int vc_home_position(int);
   int key_command(WORD);
 
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -260,7 +265,7 @@ private:
   bool styles_valid;
 
   int sel_margin_width;
-  int top_line;
+  int top_line; // 可见区域第一行在文件中的行数（从 0 开始）
   HDC hdc_bitmap;
   HBITMAP old_bitmap;
   HBRUSH sel_margin;
@@ -273,7 +278,7 @@ private:
   COLORREF background;
   HBRUSH background_sel;
 
-  int line_height;
+  int line_height; // 行高
   unsigned int max_ascent;
   unsigned int max_descent;
   unsigned int ave_char_width;
@@ -852,7 +857,7 @@ void Scintilla::paint() {
   EndPaint(m_hwnd, &ps);
   show_caret_at_current_position();
   DWORD dwend = timeGetTime();
-  dprintf("Scintilla::paint(): %dms\n", dwend - dwstart);
+  // dprintf("Scintilla::paint(): %dms\n", dwend - dwstart);
 }
 
 void Scintilla::invalidate_range(int start, int end) {
@@ -1235,6 +1240,63 @@ int Scintilla::move_position_to(int new_pos, bool extend) {
   return 0;
 }
 
+void Scintilla::set_last_x_chosen() {
+  POINT pt = location_from_position(current_pos);
+  last_x_chosen = pt.x;
+}
+
+int Scintilla::next_word_start(int delta) {
+  int new_pos = current_pos;
+  if (delta < 0) {
+    while (new_pos > 0 && (doc.char_at(new_pos - 1) == ' ' || doc.char_at(new_pos - 1) == '\t'))
+      new_pos--;
+    if (isspace(doc.char_at(new_pos - 1))) { // Back up to previous line
+      while (new_pos > 0 && isspace(doc.char_at(new_pos - 1)))
+        new_pos--;
+    }
+    else {
+      bool start_at_word_char = iswordchar(doc.char_at(new_pos - 1));
+      while (new_pos > 0 && !isspace(doc.char_at(new_pos - 1)) && start_at_word_char == iswordchar(doc.char_at(new_pos - 1)))
+        new_pos--;
+    }
+  }
+  else {
+    bool start_at_word_char = iswordchar(doc.char_at(new_pos));
+    while (new_pos < (length() - 1) && isspace(doc.char_at(new_pos)))
+      new_pos++;
+    while (new_pos < (length() - 1) && !isspace(doc.char_at(new_pos)) && start_at_word_char == iswordchar(doc.char_at(new_pos)))
+      new_pos++;
+    while (new_pos < (length() - 1) && (doc.char_at(new_pos) == ' ' || doc.char_at(new_pos) == '\t'))
+      new_pos++;
+  }
+
+  return new_pos;
+}
+
+int Scintilla::line_end_position(int position) {
+  int line = line_from_position(position);
+  if (line == lines_total() - 1)
+    position = doc.lc.cache[line + 1];
+  else
+    position = doc.lc.cache[line + 1] - 1;
+  if (position > 0 && (doc.char_at(position - 1) == '\r' || doc.char_at(position - 1) == '\n'))
+    position--;
+  return position;
+}
+
+int Scintilla::vc_home_position(int position) {
+  int line = line_from_position(position);
+  int start_position = doc.lc.cache[line];
+  int end_line = doc.lc.cache[line + 1] - 1;
+  int start_text = start_position;
+  while (start_text < end_line && (doc.char_at(start_text) == ' ' || doc.char_at(start_text) == '\t'))
+    start_text++;
+  if (position == start_text)
+    return start_position;
+  else
+    return start_text;
+}
+
 int Scintilla::key_command(WORD msg) {
   doc.set_line_cache();
   POINT pt = location_from_position(current_pos);
@@ -1259,6 +1321,62 @@ int Scintilla::key_command(WORD msg) {
     return 0;
   case SCI_LINEUPEXTEND:
     return move_position_to(position_from_location(make_point(last_x_chosen, pt.y - line_height)), true);
+  case SCI_CHARLEFT:
+    move_position_to(current_pos - 1);
+    set_last_x_chosen();
+    return 0;
+  case SCI_CHARLEFTEXTEND:
+    move_position_to(current_pos - 1, true);
+    set_last_x_chosen();
+    return 0;
+  case SCI_CHARRIGHT:
+    move_position_to(current_pos + 1);
+    set_last_x_chosen();
+    return 0;
+  case SCI_CHARRIGHTEXTEND:
+    move_position_to(current_pos + 1, true);
+    set_last_x_chosen();
+    return 0;
+  case SCI_WORDLEFT:
+    return move_position_to(next_word_start(-1));
+  case SCI_WORDLEFTEXTEND:
+    return move_position_to(next_word_start(-1), true);
+  case SCI_WORDRIGHT:
+    return move_position_to(next_word_start(1));
+  case SCI_WORDRIGHTEXTEND:
+    return move_position_to(next_word_start(1), true);
+  case SCI_HOME: // Dead code for now
+    move_position_to(doc.lc.cache[line_from_position(current_pos)]);
+    set_last_x_chosen();
+    return 0;
+  case SCI_HOMEEXTEND: // Dead code for now
+    move_position_to(doc.lc.cache[line_from_position(current_pos)], true);
+    set_last_x_chosen();
+    return 0;
+  case SCI_LINEEND:
+    move_position_to(line_end_position(current_pos));
+    set_last_x_chosen();
+    return 0;
+  case SCI_LINEENDEXTEND:
+    move_position_to(line_end_position(current_pos), true);
+    set_last_x_chosen();
+    return 0;
+  case SCI_DOCUMENTSTART:
+    move_position_to(0);
+    set_last_x_chosen();
+    return 0;
+  case SCI_DOCUMENTSTARTEXTEND:
+    move_position_to(0, true);
+    set_last_x_chosen();
+    return 0;
+  case SCI_DOCUMENTEND:
+    move_position_to(length());
+    set_last_x_chosen();
+    return 0;
+  case SCI_DOCUMENTENDEXTEND:
+    move_position_to(length(), true);
+    set_last_x_chosen();
+    return 0;
   case SCI_DELETEBACK:
     del_char_back();
     if (in_auto_complete_mode) {
@@ -1278,6 +1396,14 @@ int Scintilla::key_command(WORD msg) {
       insert_char(current_pos, '\n');
       set_selection(current_pos + 1, current_pos + 1);
     }
+    break;
+  case SCI_VCHOME:
+    move_position_to(vc_home_position(current_pos));
+    set_last_x_chosen();
+    return 0;
+  case SCI_VCHOMEEXTEND:
+    move_position_to(vc_home_position(current_pos), true);
+    set_last_x_chosen();
     break;
   }
   return 0;

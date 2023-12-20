@@ -6,3 +6,7 @@ POINT point_from_lparam(LPARAM lparam) {
   pt.y = (int)(short)HIWORD(lparam);
   return pt;
 }
+
+bool iswordchar(char ch) {
+  return isalnum(ch) || ch == '_';
+}
