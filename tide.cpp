@@ -8,10 +8,14 @@
 #include "comm.h"
 #include <Windows.h>
 #include <Richedit.h>
+#include <direct.h>
+#include <stdio.h>
 
 #pragma warning(disable: 4996)
 
 const char prop_global_filename[] = "TideGlobal.properties";
+const char prop_filename[] = "Tide.properties";
+const int block_size = 32768;
 
 bool get_default_properties_filename(char* path_default_props, unsigned int len) {
   GetModuleFileNameA(0, path_default_props, len);
@@ -25,6 +29,17 @@ bool get_default_properties_filename(char* path_default_props, unsigned int len)
     return false;
   }
 }
+
+class RecentFile {
+public:
+  RecentFile() {
+    file_name[0] = '\0';
+    line_number = -1;
+  }
+
+  char file_name[MAX_PATH];
+  int line_number;
+};
 
 class TideWindow {
 public:
@@ -42,6 +57,15 @@ private:
   void char_added(char);
   void get_range(HWND, int, int, char*);
   void colourise(int start = 0, int end = -1, bool editor = true);
+  void set_window_name();
+  void tw_new();
+  void read_local_prop_file();
+  void set_file_name(char*);
+  void set_style_for(HWND, char*);
+  void read_properties();
+  void set_file_stack_menu();
+  void add_file_to_stack(char*, int line = -1);
+  void open(char* file = 0, bool initial_cmd = false);
   void command(WPARAM, LPARAM);
   void move_split(POINT);
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -66,11 +90,23 @@ private:
   PropSet props;
   enum { height_bar = 7 };
   char window_name[MAX_PATH];
+  char full_path[MAX_PATH];
+  char file_name[MAX_PATH];
+  char file_ext[MAX_PATH];
+  char dir_name[MAX_PATH];
   bool is_dirty;
   bool is_built;
   POINT pt_start_drag;
   bool captured_mouse;
   int height_output_start_drag;
+  char* language;
+  char** keywords;
+  char* keywordlist;
+  bool first_properties_read;
+  HMENU pyro_menu;
+  enum { file_stack_max = 10 };
+  RecentFile recent_file_stack[file_stack_max];
+  enum { file_stack_cmd_id = 2 };
 };
 
 const char* TideWindow::class_name = NULL;
@@ -83,12 +119,21 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   split_vertical = false;
   height_output = 0;
   window_name[0] = '\0';
+  full_path[0] = '\0';
+  file_name[0] = '\0';
+  file_ext[0] = '\0';
+  dir_name[0] = '\0';
   props.super_ps = &props_base;
   is_dirty = false;
   is_built = false;
   pt_start_drag.x = 0;
   pt_start_drag.y = 0;
   captured_mouse = false;
+  language = strdup("java");
+  keywords = NULL;
+  keywordlist = NULL;
+  first_properties_read = true;
+  pyro_menu = NULL;
 
   read_global_prop_file();
 
@@ -107,6 +152,8 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
     NULL, NULL, h, (LPSTR)this);
   if (!hwnd_tide)
     exit(false);
+
+  open(cmd, true);
 
   ShowWindow(hwnd_tide, SW_SHOWNORMAL);
 }
@@ -222,6 +269,368 @@ void TideWindow::get_range(HWND win, int start, int end, char* text) {
 
 void TideWindow::colourise(int start, int end, bool editor) {
   // TODO
+}
+
+void TideWindow::set_window_name() {
+  if (file_name[0] == '\0')
+    strcpy(window_name, "(Untiled)");
+  else
+    strcpy(window_name, file_name);
+  strcat(window_name, " - Tide");
+  SetWindowTextA(hwnd_tide, window_name);
+}
+
+void TideWindow::tw_new() {
+  send_editor(SCI_CLEARALL);
+  full_path[0] = '\0';
+  file_name[0] = '\0';
+  file_ext[0] = '\0';
+  dir_name[0] = '\0';
+  set_window_name();
+  is_dirty = false;
+  is_built = false;
+
+  // Define markers
+  // TODO
+}
+
+void TideWindow::read_local_prop_file() {
+  char propfile[MAX_PATH] = { 0 };
+  if (dir_name[0])
+    strcpy(propfile, dir_name);
+  else
+    _getcwd(propfile, sizeof(propfile));
+  strcat(propfile, "\\");
+  strcat(propfile, prop_filename);
+  props.read(propfile);
+}
+
+void TideWindow::set_file_name(char* open_name) {
+  char path_copy[MAX_PATH + 1] = { 0 };
+
+  if (open_name[0] == '\"') {
+    strncpy(path_copy, open_name + 1, MAX_PATH);
+    path_copy[MAX_PATH] = '\0';
+    if (path_copy[strlen(path_copy) - 1] == '\"')
+      path_copy[strlen(path_copy) - 1] = '\0';
+    _fullpath(full_path, path_copy, MAX_PATH);
+  }
+  else if (open_name[0]) {
+    _fullpath(full_path, open_name, MAX_PATH);
+  }
+  else {
+    full_path[0] = '\0';
+  }
+
+  char* cp_dir_end = strrchr(full_path, '\\');
+  if (cp_dir_end) {
+    strcpy(file_name, cp_dir_end + 1);
+    strcpy(dir_name, full_path);
+    dir_name[cp_dir_end - full_path] = '\0';
+  }
+  else {
+    strcpy(file_name, full_path);
+    strcpy(dir_name, "");
+  }
+
+  char file_base[MAX_PATH] = { 0 };
+  strcpy(file_base, file_name);
+  char* cp_ext = strrchr(file_base, '.');
+  if (cp_ext) {
+    *cp_ext = '\0';
+    strcpy(file_ext, cp_ext + 1);
+  }
+  else {
+    file_ext[0] = '\0';
+  }
+
+  read_local_prop_file();
+
+  props.set("FilePath", full_path);
+  props.set("FileDir", dir_name);
+  props.set("FileName", file_base);
+  props.set("FileExt", file_ext);
+  props.set("FileNameExt", file_name);
+
+  set_window_name();
+}
+
+void TideWindow::set_style_for(HWND win, char* language) {
+  SendMessage(win, SCI_STYLECLEARALL, 0, 0);
+
+  for (int style = 0; style < 32; ++style) {
+    char* val = NULL;
+    char key[200] = { 0 };
+    sprintf_s(key, "style.%s.%0d", language, style);
+    val = strdup(props.get(key));
+    char* opt = val;
+    while (opt) {
+      char* cp_comma = strchr(opt, ',');
+      if (cp_comma)
+        *cp_comma = '\0';
+      char* colon = strchr(opt, ':');
+      if (colon)
+        *colon++ = '\0';
+      if (0 == strcmp(opt, "italics"))
+        SendMessage(win, SCI_STYLESETITALIC, style, 1);
+      if (0 == strcmp(opt, "bold"))
+        SendMessage(win, SCI_STYLESETBOLD, style, 1);
+      if (0 == strcmp(opt, "font"))
+        SendMessage(win, SCI_STYLESETFONT, style, (LPARAM)colon);
+      if (0 == strcmp(opt, "fore"))
+        SendMessage(win, SCI_STYLESETFORE, style, colour_from_string(colon));
+      if (0 == strcmp(opt, "back"))
+        SendMessage(win, SCI_STYLESETBACK, style, colour_from_string(colon));
+      if (0 == strcmp(opt, "size"))
+        SendMessage(win, SCI_STYLESETSIZE, style, atoi(colon));
+      if (cp_comma)
+        opt = cp_comma + 1;
+      else
+        opt = NULL;
+    }
+    if (val)
+      free(val);
+  }
+}
+
+void TideWindow::read_properties() {
+  DWORD dwstart = timeGetTime();
+  free(language);
+  language = props.get_new_expand("lexer.", file_name);
+  if (keywords) {
+    delete[] keywords;
+    free(keywordlist);
+  }
+  keywordlist = props.get_new_expand("keywords.", file_name);
+  char prev = ' ';
+  int words = 0;
+  for (int j = 0; keywordlist[j]; ++j) {
+    if (!isspace(keywordlist[j]) && isspace(prev))
+      words++;
+    prev = keywordlist[j];
+  }
+  keywords = new char* [words + 1];
+  words = 0;
+  prev = '\0';
+  int len = strlen(keywordlist);
+  for (int k = 0; k < len; ++k) {
+    if (!isspace(keywordlist[k])) {
+      if (!prev) {
+        keywords[words] = &keywordlist[k];
+        words++;
+      }
+    }
+    else {
+      keywordlist[k] = '\0';
+    }
+    prev = keywordlist[k];
+  }
+  keywords[words] = &keywordlist[len];
+
+  int code_page = props.get_int("code.page");
+  send_editor(SCI_SETCODEPAGE, code_page);
+
+  char* colour = NULL;
+
+  colour = props.get("back");
+  if (colour && *colour) {
+    send_editor(SCI_SETBACK, colour_from_string(colour));
+  }
+  colour = props.get("fore");
+  if (colour && *colour) {
+    send_editor(SCI_SETFORE, colour_from_string(colour));
+  }
+
+  char* size = props.get("size");
+  if (size && *size) {
+    send_editor(SCI_SETSIZE, atoi(size));
+  }
+
+  char* font = props.get("font");
+  if (font && *font) {
+    send_editor(SCI_SETFONT, (WPARAM)(font));
+  }
+
+  char* selfore = props.get("selection.fore");
+  if (selfore && *selfore) {
+    send_editor(SCI_SETSELFORE, 1, colour_from_string(selfore));
+  }
+  else {
+    send_editor(SCI_SETSELFORE, 0, 0);
+  }
+  colour = props.get("selection.back");
+  if (colour && *colour) {
+    send_editor(SCI_SETSELBACK, 1, colour_from_string(colour));
+  }
+  else {
+    if (selfore && *selfore)
+      send_editor(SCI_SETSELBACK, 0, 0);
+    else // Have to show selection somehow
+      send_editor(SCI_SETSELBACK, 1, RGB(0xc0, 0xc0, 0xc0));
+  }
+
+  set_style_for(hwnd_editor, language);
+  set_style_for(hwnd_output, (char*)"errorlist");
+
+  // As user can change vertical versus horizontal split, only read at app startup
+  if (first_properties_read)
+    split_vertical = props.get_int("split.vertical");
+
+  HMENU mainm = GetMenu(hwnd_tide);
+  if (0 == strcmp(language, "pyro")) {
+    send_editor(SCI_MARKERADD, 7, 0);
+    if (0 == pyro_menu) {
+      pyro_menu = CreatePopupMenu();
+      InsertMenuA(mainm, 3, MF_POPUP | MF_BYPOSITION, (int)pyro_menu, "&Pyro");
+      AppendMenuA(pyro_menu, MF_STRING, IDM_TABTIMMY, "TabTimmy");
+      AppendMenuA(pyro_menu, MF_STRING, IDM_SELECTIONMARGIN, "Selection Margin");
+      AppendMenuA(pyro_menu, MF_STRING, IDM_BUFFEREDDRAW, "Buffered Drawing");
+      AppendMenuA(pyro_menu, MF_STRING, IDM_STEP, "Step\t F8");
+    }
+  }
+  else {
+    send_editor(SCI_MARKERDELETEALL);
+    // Get rid of menu
+    if (pyro_menu) {
+      RemoveMenu(mainm, 3, MF_BYPOSITION);
+      DestroyMenu(pyro_menu);
+      pyro_menu = NULL;
+    }
+  }
+
+  int tabsize = props.get_int("tabsize");
+  if (tabsize) {
+    send_editor(SCI_SETTABWIDTH, tabsize);
+  }
+
+  first_properties_read = false;
+
+  DWORD dwend = timeGetTime();
+}
+
+void TideWindow::set_file_stack_menu() {
+  const int start_stack_menu_pos = 5;
+  HMENU hmenu = GetMenu(hwnd_tide);
+  HMENU hmenu_file = GetSubMenu(hmenu, 0);
+  // If there is no file stack menu item and there are > 1 files in stack
+  if (GetMenuState(hmenu_file, file_stack_cmd_id, MF_BYCOMMAND) == 0xffffffff &&
+    recent_file_stack[1].file_name[0] != '\0') {
+    InsertMenuA(hmenu_file, start_stack_menu_pos, MF_BYPOSITION | MF_SEPARATOR, file_stack_cmd_id, "-");
+  }
+  for (int stack_pos = 1; stack_pos < file_stack_max; ++stack_pos) {
+    int item_id = file_stack_cmd_id + stack_pos;
+    if (recent_file_stack[stack_pos].file_name[0]) {
+      if (GetMenuState(hmenu_file, item_id, MF_BYCOMMAND) == 0xffffffff)
+        InsertMenuA(hmenu_file, start_stack_menu_pos + stack_pos, MF_BYPOSITION, item_id,
+          recent_file_stack[stack_pos].file_name);
+      else
+        ModifyMenuA(hmenu_file, item_id, MF_BYCOMMAND, item_id, recent_file_stack[stack_pos].file_name);
+    }
+    else {
+      if (GetMenuState(hmenu_file, item_id, MF_BYCOMMAND) != 0xffffffff) {
+        DeleteMenu(hmenu_file, item_id, MF_BYCOMMAND);
+      }
+    }
+  }
+}
+
+void TideWindow::add_file_to_stack(char* file, int line) {
+  if (file[strlen(file) - 1] == '\\')
+    return;
+  int stack_pos = 0;
+  int eq_pos = file_stack_max - 1;
+  for (stack_pos = 0; stack_pos < file_stack_max; ++stack_pos)
+    if (strcmp(recent_file_stack[stack_pos].file_name, file) == 0)
+      eq_pos = stack_pos;
+  for (stack_pos = eq_pos; stack_pos > 0; stack_pos--)
+    recent_file_stack[stack_pos] = recent_file_stack[stack_pos - 1];
+  strcpy(recent_file_stack[0].file_name, file);
+  recent_file_stack[0].line_number = line;
+  set_file_stack_menu();
+  DrawMenuBar(hwnd_tide);
+}
+
+void TideWindow::open(char* file, bool initial_cmd) {
+  if (file) {
+    tw_new();
+    set_file_name(file);
+    read_properties();
+    if (file_name[0]) {
+      DWORD dwstart = timeGetTime();
+      send_editor(SCI_SETUNDOCOLLECTION, 0);
+      FILE* fp = fopen(full_path, "rb");
+      if (fp || initial_cmd) {
+        if (fp) {
+          char data[block_size] = { 0 };
+          char styled_data[block_size * 2] = { 0 };
+          add_file_to_stack(full_path);
+          int len_file = fread(data, 1, sizeof(data), fp);
+          int cur_end = 0;
+          while (len_file > 0) {
+            for (int i = 0; i < len_file; ++i)
+              styled_data[i * 2] = data[i];
+            send_editor(SCI_ADDSTYLEDTEXT, len_file * 2, (LPARAM)styled_data);
+            cur_end += len_file * 2;
+            len_file = fread(data, 1, sizeof(data), fp);
+          }
+          fclose(fp);
+          is_dirty = false;
+        }
+        else {
+          is_dirty = true;
+        }
+        is_built = false;
+        DWORD dwend = timeGetTime();
+
+        send_editor(SCI_SETUNDOCOLLECTION, 1);
+
+        if (0 == strcmp(language, "pyro")) {
+          send_editor(SCI_MARKERADD, 7, 0);
+        }
+      }
+      else {
+        char msg[200] = { 0 };
+        strcpy(msg, "Could not open file \"");
+        strcat(msg, full_path);
+        strcat(msg, "\".");
+        MessageBoxA(hwnd_tide, msg, "Tide", MB_OK);
+        set_file_name((char*)"");
+      }
+      send_editor(EM_EMPTYUNDOBUFFER);
+      send_editor(SCI_GOTOPOS, 0);
+    }
+    InvalidateRect(hwnd_editor, NULL, TRUE);
+  }
+  else {
+    char open_name[MAX_PATH] = { 0 };
+    OPENFILENAMEA ofn = { sizeof(ofn) };
+    ofn.hwndOwner = hwnd_tide;
+    ofn.hInstance = m_hinstance;
+    ofn.lpstrFile = open_name;
+    ofn.nMaxFile = sizeof(open_name);
+    char* filter = NULL;
+    char* open_filter = props.get("open.filter");
+    if (open_filter) {
+      filter = strdup(open_filter);
+      for (int fc = 0; filter[fc]; ++fc)
+        if (filter[fc] == '|')
+          filter[fc] = '\0';
+    }
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFileTitle = (LPSTR)"Open File";
+    ofn.Flags = OFN_HIDEREADONLY;
+
+    if (GetOpenFileNameA(&ofn)) {
+      free(filter);
+      dprintf("Open: <%s>\n", open_name);
+      open(open_name);
+    }
+    else {
+      free(filter);
+      return;
+    }
+  }
+  set_window_name();
 }
 
 void TideWindow::command(WPARAM wparam, LPARAM lparam) {

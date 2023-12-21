@@ -216,6 +216,8 @@ private:
 
   int clamp_position_into_document(int pos) { return clamp(pos, 0, length()); }
   int line_from_location(POINT pt) { return pt.y / line_height + top_line; }
+  int current_position() { return current_pos; }
+  void delete_undo_history() { doc.delete_undo_history(); }
 
   void create_graphic_objects(HDC);
   void refresh_style_data();
@@ -260,7 +262,10 @@ private:
   void button_down(WPARAM, LPARAM);
   void button_move(LPARAM);
   void button_up(LPARAM);
-
+  void clear_all();
+  void invalidate_style_data();
+  void redraw_sel_margin();
+  void set_position(int, bool shift = false);
   long wnd_proc(WORD, WPARAM, LPARAM);
 
 private:
@@ -316,7 +321,11 @@ private:
   POINT last_click;
   enum { sel_char, sel_word, sel_line } sel_type;
   int original_anchor_pos;
-  int line_anchor = 0;
+  int line_anchor;
+  int size;
+  char font_name[100];
+  bool bold;
+  bool italic;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -373,6 +382,10 @@ Scintilla::Scintilla() {
   sel_type = sel_char;
   original_anchor_pos = 0;
   line_anchor = 0;
+  size = 10;
+  strcpy(font_name, "Verdana");
+  bold = false;
+  italic = false;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -1548,6 +1561,42 @@ void Scintilla::button_up(LPARAM lparam) {
   }
 }
 
+void Scintilla::clear_all() {
+  if (0 != length()) {
+    delete_chars(0, length());
+  }
+  anchor = 0;
+  current_pos = 0;
+  top_line = 0;
+  set_vert_scroll_from_top_line();
+  redraw();
+}
+
+void Scintilla::invalidate_style_data() {
+  styles_valid = false;
+  drop_graphics();
+}
+
+void Scintilla::redraw_sel_margin() {
+  if (sel_margin_width > 0) {
+    RECT rc_client = { 0 };
+    GetClientRect(m_hwnd, &rc_client);
+    rc_client.right = sel_margin_width;
+    InvalidateRect(m_hwnd, &rc_client, FALSE);
+  }
+  else
+    redraw();
+}
+
+void Scintilla::set_position(int pos, bool shift) {
+  int old_pos = current_pos;
+  current_pos = clamp_position_into_document(pos);
+  current_pos = move_position_outside_char(current_pos, old_pos - current_pos);
+  if (!shift)
+    anchor = current_pos;
+  ensure_caret_visible();
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -1624,6 +1673,9 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     hide_selection = wparam;
     redraw();
     break;
+  case EM_EMPTYUNDOBUFFER:
+    delete_undo_history();
+    return 0;
   case SCI_GETSTYLEAT:
     if ((int)wparam >= length())
       return 0;
@@ -1648,6 +1700,119 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case SCI_GETENDSTYLED:
     return end_styled;
+  case SCI_CLEARALL:
+    clear_all();
+    return 0;
+  case SCI_SETCODEPAGE:
+    dbcs_code_page = wparam;
+    break;
+  case SCI_SETFORE:
+    foreground = wparam;
+    invalidate_style_data();
+    break;
+  case SCI_SETBACK:
+    background = wparam;
+    invalidate_style_data();
+    break;
+  case SCI_SETSIZE:
+    size = wparam;
+    invalidate_style_data();
+    break;
+  case SCI_SETFONT:
+    strcpy(font_name, (char*)wparam);
+    invalidate_style_data();
+    break;
+  case SCI_SETSELFORE:
+    selforeset = wparam;
+    sel_foreground = lparam;
+    invalidate_style_data();
+    break;
+  case SCI_SETSELBACK:
+    selbackset = wparam;
+    sel_background = lparam;
+    invalidate_style_data();
+    break;
+  case SCI_STYLECLEARALL:
+    for (int i = 0; i <= STYLE_MAX; ++i)
+      styles[i].clear(foreground, background, size, font_name, bold, italic);
+    invalidate_style_data();
+    break;
+  case SCI_STYLESETFORE:
+    if (wparam <= STYLE_MAX) {
+      styles[wparam].fore = lparam;
+      invalidate_style_data();
+    }
+    break;
+  case SCI_STYLESETBACK:
+    if (wparam <= STYLE_MAX) {
+      styles[wparam].back = lparam;
+      invalidate_style_data();
+    }
+    break;
+  case SCI_STYLESETBOLD:
+    if (wparam <= STYLE_MAX) {
+      styles[wparam].bold = lparam;
+      invalidate_style_data();
+    }
+    break;
+  case SCI_STYLESETITALIC:
+    if (wparam <= STYLE_MAX) {
+      styles[wparam].italic = lparam;
+      invalidate_style_data();
+    }
+    break;
+  case SCI_STYLESETSIZE:
+    if (wparam <= STYLE_MAX) {
+      styles[wparam].size = lparam;
+      invalidate_style_data();
+    }
+    break;
+  case SCI_STYLESETFONT:
+    if (wparam <= STYLE_MAX) {
+      strcpy(styles[wparam].font_name, (char*)lparam);
+      invalidate_style_data();
+    }
+    break;
+  case SCI_MARKERADD:
+    ensure_markers_size();
+    if (markers_set && wparam < (unsigned int)len_markers_set)
+      markers_set[wparam] |= (1 << lparam);
+    redraw_sel_margin();
+    break;
+  case SCI_MARKERDELETEALL:
+    if (wparam == (WPARAM)-1) {
+      delete[] markers_set;
+      markers_set = NULL;
+      len_markers_set = 0;
+    }
+    else {
+      ensure_markers_size();
+      if (markers_set) {
+        for (int line = 0; line < lines_total(); ++line) {
+          markers_set[line] &= ~(1 << wparam);
+        }
+      }
+    }
+    redraw_sel_margin();
+    break;
+  case SCI_SETTABWIDTH:
+    if (wparam > 0)
+      tab_in_chars = wparam;
+    invalidate_style_data();
+    break;
+  case SCI_SETUNDOCOLLECTION:
+    doc.set_undo_collection(wparam);
+    return 0;
+  case SCI_ADDSTYLEDTEXT:
+    insert_styled_string(current_position() * 2, (char*)lparam, wparam);
+    set_selection(current_pos + wparam / 2, current_pos + wparam / 2);
+    set_scroll_bars();
+    redraw();
+    break;
+  case SCI_GOTOPOS:
+    set_position(wparam);
+    redraw();
+    break;
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:
   case SCI_LINEUP:
