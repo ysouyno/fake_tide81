@@ -1,7 +1,7 @@
 #pragma once
 
 #define IDM_TABTIMMY 240
-#define IDM_STEP 241
+// #define IDM_STEP 241
 #define IDM_SELECTIONMARGIN 242
 #define IDM_BUFFEREDDRAW 243
 

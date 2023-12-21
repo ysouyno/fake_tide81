@@ -199,6 +199,7 @@ private:
   }
 
   int length() { return doc.get_length(); }
+  char char_at(int pos) { return doc.char_at(pos); }
 
   int selection_start() { return min(current_pos, anchor); }
   int selection_end() { return max(current_pos, anchor); }
@@ -1813,6 +1814,10 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     set_position(wparam);
     redraw();
     break;
+  case SCI_GETLENGTH:
+    return length();
+  case SCI_GETCHARAT:
+    return char_at(wparam);
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:
   case SCI_LINEUP:

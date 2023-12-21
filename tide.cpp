@@ -6,6 +6,7 @@
 #include "prop_set.h"
 #include "dlog.h"
 #include "comm.h"
+#include "resource.h"
 #include <Windows.h>
 #include <Richedit.h>
 #include <direct.h>
@@ -13,16 +14,16 @@
 
 #pragma warning(disable: 4996)
 
-const char prop_global_filename[] = "TideGlobal.properties";
-const char prop_filename[] = "Tide.properties";
+const char prop_global_file_name[] = "TideGlobal.properties";
+const char prop_file_name[] = "Tide.properties";
 const int block_size = 32768;
 
 bool get_default_properties_filename(char* path_default_props, unsigned int len) {
   GetModuleFileNameA(0, path_default_props, len);
   char* last_slash = strrchr(path_default_props, '\\');
-  unsigned int name_len = strlen(prop_global_filename);
+  unsigned int name_len = strlen(prop_global_file_name);
   if (last_slash && ((last_slash + 1 - path_default_props + name_len) < len)) {
-    strcpy(last_slash + 1, prop_global_filename);
+    strcpy(last_slash + 1, prop_global_file_name);
     return true;
   }
   else {
@@ -66,6 +67,10 @@ private:
   void set_file_stack_menu();
   void add_file_to_stack(char*, int line = -1);
   void open(char* file = 0, bool initial_cmd = false);
+  int length_document();
+  void save_as(char* file = NULL);
+  void save();
+  int save_if_unsure();
   void command(WPARAM, LPARAM);
   void move_split(POINT);
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -301,7 +306,7 @@ void TideWindow::read_local_prop_file() {
   else
     _getcwd(propfile, sizeof(propfile));
   strcat(propfile, "\\");
-  strcat(propfile, prop_filename);
+  strcat(propfile, prop_file_name);
   props.read(propfile);
 }
 
@@ -633,8 +638,102 @@ void TideWindow::open(char* file, bool initial_cmd) {
   set_window_name();
 }
 
+int TideWindow::length_document() {
+  return send_editor(SCI_GETLENGTH);
+}
+
+void TideWindow::save_as(char* file) {
+  if (file && *file) {
+    strcpy(full_path, file);
+    save();
+    set_window_name();
+  }
+  else {
+    char open_name[MAX_PATH] = { 0 };
+    strcpy(open_name, file_name);
+    OPENFILENAMEA ofn = { sizeof(ofn) };
+    ofn.hwndOwner = hwnd_tide;
+    ofn.hInstance = m_hinstance;
+    ofn.lpstrFile = open_name;
+    ofn.nMaxFile = sizeof(open_name);
+    ofn.lpstrFileTitle = (LPSTR)"Open File";
+    ofn.Flags = OFN_HIDEREADONLY;
+
+    if (GetSaveFileNameA(&ofn)) {
+      dprintf("Save: <%s>\n", open_name);
+      set_file_name(open_name);
+      save();
+      read_properties();
+      colourise(); // In case extension was changed
+      InvalidateRect(hwnd_editor, NULL, TRUE);
+    }
+  }
+}
+
+void TideWindow::save() {
+  if (file_name[0]) {
+    dprintf("Saving <%s>\n", file_name);
+    FILE* fp = fopen(full_path, "wb");
+    if (fp) {
+      add_file_to_stack(full_path, get_current_line_number());
+      int length_doc = length_document();
+      for (int i = 0; i < length_doc; ++i) {
+        char ch = (char)send_editor(SCI_GETCHARAT, i);
+        fputc(ch, fp);
+      }
+      fclose(fp);
+      is_dirty = false;
+      if (0 == stricmp(file_name, prop_file_name) || 0 == stricmp(file_name, prop_global_file_name)) {
+        read_global_prop_file();
+        read_local_prop_file();
+        read_properties();
+        InvalidateRect(hwnd_editor, NULL, TRUE);
+      }
+    }
+    else {
+      char msg[200] = { 0 };
+      strcpy(msg, "Could not save file \"");
+      strcat(msg, full_path);
+      strcat(msg, "\".");
+      MessageBoxA(hwnd_tide, msg, "Tide", MB_OK);
+    }
+  }
+  else {
+    save_as();
+  }
+}
+
+int TideWindow::save_if_unsure() {
+  if (is_dirty) {
+    if (props.get_int("are.you.sure")) {
+      char msg[200] = { 0 };
+      strcpy(msg, "Save changes to \"");
+      strcat(msg, full_path);
+      strcat(msg, "\"?");
+      int decision = MessageBoxA(hwnd_tide, msg, "Tide", MB_YESNOCANCEL);
+      if (decision == IDYES)
+        save();
+      return decision;
+    }
+    else {
+      save();
+    }
+  }
+  else {
+    recent_file_stack[0].line_number = get_current_line_number();
+    dprintf("Saving pos %d %s\n", recent_file_stack[0].line_number, recent_file_stack[0].file_name);
+  }
+  return IDYES;
+}
+
 void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   switch (LOWORD(wparam)) {
+  case IDM_OPEN:
+    if (save_if_unsure() != IDCANCEL) {
+      open();
+      SetFocus(hwnd_editor);
+    }
+    break;
   case IDM_SRCWIN: {
     int cmd = HIWORD(wparam);
     if (cmd == EN_CHANGE) {
