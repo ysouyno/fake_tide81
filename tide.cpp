@@ -282,6 +282,7 @@ void TideWindow::colourise(int start, int end, bool editor) {
   char* cdoc = new char[end - start + 1];
   dprintf("colourise size = %d, ptr = %x\n", length_doc, cdoc);
 
+  // 将文件的所有内容拷贝到 cdoc 中
   get_range(win, start, end, cdoc);
 
   int style_start = 0;
@@ -303,6 +304,7 @@ void TideWindow::set_window_name() {
   else
     strcpy(window_name, file_name);
   strcat(window_name, " - Tide");
+  // TODO 为什么窗口标题会变成乱码？
   SetWindowTextA(hwnd_tide, window_name);
 }
 
