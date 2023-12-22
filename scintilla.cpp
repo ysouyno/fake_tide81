@@ -327,6 +327,8 @@ private:
   char font_name[100];
   bool bold;
   bool italic;
+  int styling_pos;
+  int styling_mask;
 };
 
 HINSTANCE Scintilla::m_hinstance = 0;
@@ -387,6 +389,8 @@ Scintilla::Scintilla() {
   strcpy(font_name, "Verdana");
   bold = false;
   italic = false;
+  styling_pos = 0;
+  styling_mask = 0;
 }
 
 void Scintilla::create_graphic_objects(HDC hdc) {
@@ -1818,6 +1822,15 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     return length();
   case SCI_GETCHARAT:
     return char_at(wparam);
+  case SCI_STARTSTYLING:
+    styling_pos = wparam;
+    styling_mask = lparam;
+    break;
+  case SCI_SETSTYLING:
+    for (unsigned int ipos = 0; ipos < wparam; ++ipos, ++styling_pos)
+      doc.set_style_at(styling_pos, (char)lparam, styling_mask);
+    end_styled = styling_pos;
+    break;
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:
   case SCI_LINEUP:

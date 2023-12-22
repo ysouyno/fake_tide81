@@ -6,6 +6,7 @@
 #include "prop_set.h"
 #include "dlog.h"
 #include "comm.h"
+#include "keywords.h"
 #include "resource.h"
 #include <Windows.h>
 #include <Richedit.h>
@@ -273,7 +274,27 @@ void TideWindow::get_range(HWND win, int start, int end, char* text) {
 }
 
 void TideWindow::colourise(int start, int end, bool editor) {
-  // TODO
+  DWORD dwstart = timeGetTime();
+  HWND win = editor ? hwnd_editor : hwnd_output;
+  int length_doc = SendMessage(win, SCI_GETLENGTH, 0, 0);
+  if (end == -1)
+    end = length_doc;
+  char* cdoc = new char[end - start + 1];
+  dprintf("colourise size = %d, ptr = %x\n", length_doc, cdoc);
+
+  get_range(win, start, end, cdoc);
+
+  int style_start = 0;
+  if (start > 0)
+    style_start = SendMessage(win, SCI_GETSTYLEAT, start - 1, 0);
+  if (editor)
+    colourise_doc(cdoc, start, end - start, style_start, language, keywords, win);
+  else
+    colourise_doc(cdoc, start, end - start, 0, "errorlist", 0, win);
+  InvalidateRect(win, NULL, FALSE);
+  delete[] cdoc;
+  DWORD dwend = timeGetTime();
+  dprintf("end colourise %d\n", dwend - dwstart);
 }
 
 void TideWindow::set_window_name() {

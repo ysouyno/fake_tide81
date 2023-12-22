@@ -131,6 +131,7 @@
     <ClCompile Include="comm.cpp" />
     <ClCompile Include="dlog.cpp" />
     <ClCompile Include="document.cpp" />
+    <ClCompile Include="keywords.cpp" />
     <ClCompile Include="prop_set.cpp" />
     <ClCompile Include="tide.cpp" />
     <ClCompile Include="scintilla.cpp" />
@@ -139,6 +140,7 @@
     <ClInclude Include="comm.h" />
     <ClInclude Include="dlog.h" />
     <ClInclude Include="document.h" />
+    <ClInclude Include="keywords.h" />
     <ClInclude Include="prop_set.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="scintilla.h" />
