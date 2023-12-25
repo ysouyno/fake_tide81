@@ -242,6 +242,7 @@ private:
   void notify_change();
   void notify_char(char);
   void notify_style_needed(int);
+  void notify_save_point(bool);
   void add_char(char);
   void drop_graphics();
   bool is_crlf(int);
@@ -268,6 +269,7 @@ private:
   void redraw_sel_margin();
   void set_position(int, bool shift = false);
   void go_to_line(int);
+  void undo();
   long wnd_proc(WORD, WPARAM, LPARAM);
 
 private:
@@ -1054,6 +1056,11 @@ void Scintilla::notify_style_needed(int end_style_needed) {
     MAKELONG(GetDlgCtrlID(m_hwnd), SCN_STYLENEEDED), end_style_needed);
 }
 
+void Scintilla::notify_save_point(bool is_save_point) {
+  SendMessage(GetParent(m_hwnd), WM_COMMAND,
+    MAKELONG(GetDlgCtrlID(m_hwnd), SCN_SAVEPOINTREACHED), is_save_point ? 1 : 0);
+}
+
 void Scintilla::add_char(char ch) {
   bool was_selection = current_pos != anchor;
   clear_selection();
@@ -1615,6 +1622,23 @@ void Scintilla::go_to_line(int line_no) {
   ensure_caret_visible();
 }
 
+void Scintilla::undo() {
+  if (doc.can_undo()) {
+    bool start_save_point = doc.is_save_point();
+    int earliest_mod = length();
+    int new_pos = doc.undo(&earliest_mod) / 2;
+    set_selection(new_pos, new_pos);
+    ensure_caret_visible();
+    modified_at(earliest_mod / 2);
+    notify_change();
+    redraw();
+    bool end_save_point = doc.is_save_point();
+    if (start_save_point != end_save_point)
+      notify_save_point(end_save_point);
+    set_scroll_bars();
+  }
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -1653,6 +1677,10 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case WM_CLEAR:
     clear();
+    set_scroll_bars();
+    break;
+  case WM_UNDO:
+    undo();
     set_scroll_bars();
     break;
   case EM_EXGETSEL:

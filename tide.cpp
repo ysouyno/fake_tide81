@@ -825,6 +825,9 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     if (save_if_unsure() != IDCANCEL)
       stack_menu(1);
     break;
+  case IDM_UNDO:
+    send_editor(WM_UNDO);
+    break;
   case IDM_SRCWIN: {
     int cmd = HIWORD(wparam);
     if (cmd == EN_CHANGE) {
