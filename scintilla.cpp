@@ -267,6 +267,7 @@ private:
   void invalidate_style_data();
   void redraw_sel_margin();
   void set_position(int, bool shift = false);
+  void go_to_line(int);
   long wnd_proc(WORD, WPARAM, LPARAM);
 
 private:
@@ -1602,6 +1603,18 @@ void Scintilla::set_position(int pos, bool shift) {
   ensure_caret_visible();
 }
 
+void Scintilla::go_to_line(int line_no) {
+  doc.set_line_cache();
+  line_no--;
+  if (line_no > lines_total())
+    line_no = lines_total();
+  if (line_no < 0)
+    line_no = 0;
+  set_selection(doc.lc.cache[line_no], doc.lc.cache[line_no]);
+  show_caret_at_current_position();
+  ensure_caret_visible();
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -1830,6 +1843,9 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     for (unsigned int ipos = 0; ipos < wparam; ++ipos, ++styling_pos)
       doc.set_style_at(styling_pos, (char)lparam, styling_mask);
     end_styled = styling_pos;
+    break;
+  case SCI_GOTOLINE:
+    go_to_line(wparam);
     break;
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:

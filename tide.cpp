@@ -72,6 +72,8 @@ private:
   void save_as(char* file = NULL);
   void save();
   int save_if_unsure();
+  void drop_file_stack_top();
+  void stack_menu(int);
   void command(WPARAM, LPARAM);
   void move_split(POINT);
   long wnd_proc(WORD, WPARAM, LPARAM);
@@ -751,13 +753,76 @@ int TideWindow::save_if_unsure() {
   return IDYES;
 }
 
+void TideWindow::drop_file_stack_top() {
+  for (int stack_pos = 0; stack_pos < file_stack_max; ++stack_pos)
+    recent_file_stack[stack_pos] = recent_file_stack[stack_pos + 1];
+  strcpy(recent_file_stack[file_stack_max - 1].file_name, "");
+  recent_file_stack[file_stack_max - 1].line_number = -1;
+  set_file_stack_menu();
+}
+
+void TideWindow::stack_menu(int pos) {
+  if (pos == -1) {
+    int last_pos = -1;
+    for (int stack_pos = 1; stack_pos < file_stack_max; ++stack_pos) {
+      if (recent_file_stack[stack_pos].file_name[0])
+        last_pos = stack_pos;
+    }
+    if (last_pos > 0) {
+      int line = recent_file_stack[last_pos].line_number;
+      open(recent_file_stack[last_pos].file_name);
+      if (line != -1)
+        send_editor(SCI_GOTOLINE, line + 1);
+    }
+  }
+  else {
+    if (recent_file_stack[pos].file_name[0] == '\0') // Empty
+      tw_new();
+    else {
+      int line = recent_file_stack[pos].line_number;
+      open(recent_file_stack[pos].file_name);
+      if (line != -1)
+        send_editor(SCI_GOTOLINE, line + 1);
+    }
+  }
+}
+
 void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   switch (LOWORD(wparam)) {
+  case IDM_NEW:
+    if (save_if_unsure() != IDCANCEL) {
+      tw_new();
+    }
+    break;
   case IDM_OPEN:
     if (save_if_unsure() != IDCANCEL) {
       open();
       SetFocus(hwnd_editor);
     }
+    break;
+  case IDM_CLOSE:
+    if (save_if_unsure() != IDCANCEL) {
+      drop_file_stack_top();
+      stack_menu(0);
+      // If none left, New()
+      SetFocus(hwnd_editor);
+    }
+    break;
+  case IDM_SAVE:
+    save();
+    SetFocus(hwnd_editor);
+    break;
+  case IDM_SAVEAS:
+    save_as();
+    SetFocus(hwnd_editor);
+    break;
+  case IDM_QUIT:
+    if (save_if_unsure() != IDCANCEL)
+      SendMessage(hwnd_tide, WM_CLOSE, 0, 0);
+    break;
+  case IDM_NEXTFILE:
+    if (save_if_unsure() != IDCANCEL)
+      stack_menu(1);
     break;
   case IDM_SRCWIN: {
     int cmd = HIWORD(wparam);
