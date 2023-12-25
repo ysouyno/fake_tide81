@@ -305,6 +305,8 @@ void TideWindow::set_window_name() {
     strcpy(window_name, file_name);
   strcat(window_name, " - Tide");
   // TODO 为什么窗口标题会变成乱码？
+  // 因为本工程属性是“Use Unicode Character Set”，所以默认的处理函数是：DefWindowProc，
+  // 即 DefWindowProcW，所以会有乱码，因此处理 WM_SETTEXT 消息让它走 DefWindowProcA 即可
   SetWindowTextA(hwnd_tide, window_name);
 }
 
@@ -896,6 +898,8 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
       ReleaseCapture();
     }
     break;
+  case WM_SETTEXT:
+    return DefWindowProcA(hwnd_tide, imsg, wparam, lparam);
   case WM_DESTROY:
     if (hwnd_editor)
       DestroyWindow(hwnd_editor);
