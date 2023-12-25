@@ -18,6 +18,7 @@
 const char prop_global_file_name[] = "TideGlobal.properties";
 const char prop_file_name[] = "Tide.properties";
 const int block_size = 32768;
+HWND current_dlg = NULL;
 
 bool get_default_properties_filename(char* path_default_props, unsigned int len) {
   GetModuleFileNameA(0, path_default_props, len);
@@ -1040,10 +1041,12 @@ int __stdcall WinMain(
   msg.wParam = 0;
   while (going) {
     going = GetMessage(&msg, NULL, 0, 0);
-    if (going) {
-      if (TranslateAccelerator(msg.hwnd, h_acc_table, &msg) == 0) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+    if (current_dlg && going) {
+      if (!IsDialogMessage(current_dlg, &msg)) {
+        if (TranslateAccelerator(msg.hwnd, h_acc_table, &msg) == 0) {
+          TranslateMessage(&msg);
+          DispatchMessage(&msg);
+        }
       }
     }
     else if (going) {
