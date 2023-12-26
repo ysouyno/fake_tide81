@@ -835,7 +835,15 @@ void Scintilla::paint() {
           int mask = INDIC0_MASK;
           int indicnum = 0;
           for (indicnum = 0; indicnum <= INDIC_MAX; ++indicnum) {
-            if (indicators_set & mask && !(prev_indic & mask)) {
+            if ((indicators_set & mask) && !(prev_indic & mask)) {
+              ind_start[indicnum] = xpos;
+            }
+            mask = mask << 1;
+          }
+
+          mask = INDIC0_MASK;
+          for (indicnum = 0; indicnum <= INDIC_MAX; ++indicnum) {
+            if (!(indicators_set & mask) && (prev_indic & mask)) {
               RECT rc_indic = {
                 ind_start[indicnum] - x_offset,
                 ypos + (LONG)max_ascent,
