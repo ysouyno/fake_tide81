@@ -106,7 +106,7 @@ void Document::gap_to(int position) {
     int diff = position - part1len;
     for (int i = 0; i < diff; ++i)
       // gap ÏòÓÒ²àÒÆ¶¯£¬¾ÍÊÇ½«ÓÒ±ßµÄ×Ö·û´®Ïò×ó¿½±´
-      body[part1len + i] = body[part1len + gaplen + 1];
+      body[part1len + i] = body[part1len + gaplen + i];
   }
   part1len = position;
   part2body = body + gaplen;
