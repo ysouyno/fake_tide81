@@ -85,6 +85,7 @@ Document::Document(int initial_length) {
   actions[current_action].create(start_action);
 
   read_only = false;
+  collecting_undo = 1;
 }
 
 Document::~Document() {

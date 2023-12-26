@@ -953,7 +953,7 @@ void Scintilla::delete_chars(int pos, int len) {
     bool start_save_point = doc.is_save_point();
     doc.delete_chars(pos * 2, len * 2);
     if (start_save_point && doc.is_collecting_undo()) {
-      // TODO NotifySavePoint(!startSavePoint);
+      notify_save_point(!start_save_point);
     }
     modified_at(pos);
     notify_change();
@@ -979,7 +979,7 @@ void Scintilla::insert_styled_string(int position, char* s, int insert_length) {
     bool start_save_point = doc.is_save_point();
     doc.insert_string(position, s, insert_length);
     if (start_save_point && doc.is_collecting_undo()) {
-      // TODO NotifySavePoint(!start_save_point);
+      notify_save_point(!start_save_point);
     }
     modified_at(position / 2);
     notify_change();
@@ -1250,6 +1250,13 @@ int Scintilla::move_position_outside_char(int pos, int move_dir) {
     return pos;
   if (pos == length())
     return pos;
+
+  if (is_crlf(pos - 1)) {
+    if (move_dir > 0)
+      return pos + 1;
+    else
+      return pos - 1;
+  }
 
   // Not between CR and LF
 
