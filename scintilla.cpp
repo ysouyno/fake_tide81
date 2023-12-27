@@ -270,6 +270,7 @@ private:
   void set_position(int, bool shift = false);
   void go_to_line(int);
   void undo();
+  void redo();
   long wnd_proc(WORD, WPARAM, LPARAM);
 
 private:
@@ -1654,6 +1655,23 @@ void Scintilla::undo() {
   }
 }
 
+void Scintilla::redo() {
+  if (doc.can_redo()) {
+    bool start_save_point = doc.is_save_point();
+    int earliest_mod = length();
+    int new_pos = doc.redo(&earliest_mod) / 2;
+    set_selection(new_pos, new_pos);
+    ensure_caret_visible();
+    modified_at(earliest_mod / 2);
+    notify_change();
+    redraw();
+    bool end_save_point = doc.is_save_point();
+    if (start_save_point != end_save_point)
+      notify_save_point(end_save_point);
+    set_scroll_bars();
+  }
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -1889,6 +1907,9 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case SCI_GOTOLINE:
     go_to_line(wparam);
+    break;
+  case SCI_REDO:
+    redo();
     break;
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:
