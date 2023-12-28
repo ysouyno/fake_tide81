@@ -271,6 +271,11 @@ private:
   void go_to_line(int);
   void undo();
   void redo();
+  HGLOBAL get_sel_text();
+  void cut();
+  void copy();
+  void paste();
+  void select_all();
   long wnd_proc(WORD, WPARAM, LPARAM);
 
 private:
@@ -1672,6 +1677,67 @@ void Scintilla::redo() {
   }
 }
 
+HGLOBAL Scintilla::get_sel_text() {
+  int bytes = 0;
+  int start_pos = selection_start();
+  bytes = selection_end() - start_pos;
+  HGLOBAL hand = NULL;
+  LPSTR ptr = NULL;
+  hand = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes + 1);
+  if (hand) {
+    ptr = (LPSTR)GlobalLock(hand);
+    for (int i = 0; i < bytes; ++i) {
+      ptr[i] = doc.char_at(start_pos + i);
+    }
+    ptr[bytes] = '\0';
+    GlobalUnlock(hand);
+  }
+  return hand;
+}
+
+void Scintilla::cut() {
+  copy();
+  clear_selection();
+  redraw();
+}
+
+void Scintilla::copy() {
+  HGLOBAL hmem_selection = get_sel_text();
+  OpenClipboard(m_hwnd);
+  EmptyClipboard();
+  SetClipboardData(CF_TEXT, hmem_selection);
+  CloseClipboard();
+}
+
+void Scintilla::paste() {
+  clear_selection();
+  OpenClipboard(m_hwnd);
+  HGLOBAL hmem_selection = GetClipboardData(CF_TEXT);
+  if (hmem_selection) {
+    LPSTR ptr = (LPSTR)GlobalLock(hmem_selection);
+    if (ptr) {
+      unsigned int bytes = GlobalSize(hmem_selection);
+      int len = bytes;
+      for (unsigned int i = 0; i < bytes; ++i) {
+        if (len == bytes && 0 == ptr[i])
+          len = i;
+      }
+      insert_string(current_pos, ptr, len);
+      int new_pos = current_pos + len;
+      set_selection(new_pos, new_pos);
+    }
+    GlobalUnlock(hmem_selection);
+  }
+  CloseClipboard();
+  notify_change();
+  redraw();
+}
+
+void Scintilla::select_all() {
+  set_selection(0, doc.get_length());
+  redraw();
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -1714,6 +1780,17 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case WM_UNDO:
     undo();
+    set_scroll_bars();
+    break;
+  case WM_CUT:
+    cut();
+    set_scroll_bars();
+    break;
+  case WM_COPY:
+    copy();
+    break;
+  case WM_PASTE:
+    paste();
     set_scroll_bars();
     break;
   case EM_EXGETSEL:
@@ -1910,6 +1987,9 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case SCI_REDO:
     redo();
+    break;
+  case SCI_SELECTALL:
+    select_all();
     break;
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:

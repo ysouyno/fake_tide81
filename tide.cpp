@@ -831,6 +831,21 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   case IDM_REDO:
     send_editor(SCI_REDO);
     break;
+  case IDM_CUT:
+    send_editor(WM_CUT);
+    break;
+  case IDM_COPY:
+    send_editor(WM_COPY);
+    break;
+  case IDM_PASTE:
+    send_editor(WM_PASTE);
+    break;
+  case IDM_CLEAR:
+    send_editor(WM_CLEAR);
+    break;
+  case IDM_SELECTALL:
+    send_editor(SCI_SELECTALL);
+    break;
   case IDM_SRCWIN: {
     int cmd = HIWORD(wparam);
     if (cmd == EN_CHANGE) {
