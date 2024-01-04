@@ -936,6 +936,9 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   case IDM_FIND:
     find();
     break;
+  case IDM_FINDNEXT:
+    find_next();
+    break;
   case IDM_SRCWIN: {
     int cmd = HIWORD(wparam);
     if (cmd == EN_CHANGE) {
