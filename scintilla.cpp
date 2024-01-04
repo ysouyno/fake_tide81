@@ -276,6 +276,8 @@ private:
   void copy();
   void paste();
   void select_all();
+  bool is_word_at(int, int);
+  long find_text(WORD, WPARAM, LPARAM);
   long wnd_proc(WORD, WPARAM, LPARAM);
 
 private:
@@ -1738,6 +1740,77 @@ void Scintilla::select_all() {
   redraw();
 }
 
+bool Scintilla::is_word_at(int start, int end) {
+  int length_doc = length();
+  if (start > 0) {
+    char ch = char_at(start - 1);
+    dprintf("start = %c\n", ch);
+    if (isalnum(ch))
+      return false;
+  }
+  if (end < length_doc - 1) {
+    char ch = char_at(end + 1);
+    dprintf("end = %c\n", ch);
+    if (isalnum(ch))
+      return false;
+  }
+  return true;
+}
+
+long Scintilla::find_text(WORD msg, WPARAM wparam, LPARAM lparam) {
+  FINDTEXTEXA* ft = (FINDTEXTEXA*)lparam;
+  int start_pos = clamp_position_into_document(ft->chrg.cpMin);
+  int end_pos = clamp_position_into_document(ft->chrg.cpMax);
+  int length_find = strlen(ft->lpstrText);
+  dprintf("%d %d %s %d\n", start_pos, end_pos, ft->lpstrText, length_find);
+  for (int pos = start_pos; pos < end_pos - length_find + 1; ++pos) {
+    char ch = char_at(pos);
+    if (wparam & FR_MATCHCASE) {
+      if (ch == ft->lpstrText[0]) {
+        bool found = true;
+        for (int pos_match = 0; pos_match < length_find && found; ++pos_match) {
+          ch = char_at(pos + pos_match);
+          if (ch != ft->lpstrText[pos_match])
+            found = false;
+        }
+        if (found) {
+          if (wparam & FR_WHOLEWORD)
+            found = is_word_at(pos, pos + length_find - 1);
+          if (found) {
+            if (msg == EM_FINDTEXTEX) {
+              ft->chrgText.cpMin = pos;
+              ft->chrgText.cpMax = pos + length_find - 1;
+            }
+            return pos;
+          }
+        }
+      }
+    }
+    else {
+      if (toupper(ch) == toupper(ft->lpstrText[0])) {
+        bool found = true;
+        for (int pos_match = 0; pos_match < length_find && found; ++pos_match) {
+          ch = char_at(pos + pos_match);
+          if (toupper(ch) != toupper(ft->lpstrText[pos_match]))
+            found = false;
+        }
+        if (found) {
+          if (wparam & FR_WHOLEWORD)
+            found = is_word_at(pos, pos + length_find - 1);
+          if (found) {
+            if (msg == EM_FINDTEXTEX) {
+              ft->chrgText.cpMin = pos;
+              ft->chrgText.cpMax = pos + length_find - 1;
+            }
+            return pos;
+          }
+        }
+      }
+    }
+  }
+  return -1;
+}
+
 long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   // dprintf("S start wnd proc %x %d %d\n", msg, wparam, lparam);
   switch (msg) {
@@ -1793,12 +1866,19 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     paste();
     set_scroll_bars();
     break;
+  case EM_GETSEL:
   case EM_EXGETSEL:
     if (wparam)
       *(LPDWORD)wparam = selection_start();
     if (lparam)
       *(LPDWORD)lparam = selection_end();
     return MAKELONG(selection_start(), selection_end());
+  case EM_SETSEL:
+  case EM_EXSETSEL:
+    set_selection(lparam, wparam);
+    ensure_caret_visible();
+    redraw();
+    break;
   case EM_LINEFROMCHAR:
     return line_from_position(wparam);
   case EM_LINELENGTH:
@@ -1832,6 +1912,8 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   case EM_EMPTYUNDOBUFFER:
     delete_undo_history();
     return 0;
+  case EM_FINDTEXTEX:
+    return find_text(msg, wparam, lparam);
   case SCI_GETSTYLEAT:
     if ((int)wparam >= length())
       return 0;
@@ -1991,6 +2073,8 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
   case SCI_SELECTALL:
     select_all();
     break;
+  case SCI_GETCURRENTPOS:
+    return current_pos;
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:
   case SCI_LINEUP:

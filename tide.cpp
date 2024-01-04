@@ -75,8 +75,12 @@ private:
   int save_if_unsure();
   void drop_file_stack_top();
   void stack_menu(int);
+  void selection_into_find();
+  void find();
+  void find_next();
   void command(WPARAM, LPARAM);
   void move_split(POINT);
+  void handle_find_replace();
   long wnd_proc(WORD, WPARAM, LPARAM);
 
   LRESULT send_editor(UINT msg, WPARAM wparam = 0, LPARAM lparam = 0) {
@@ -116,6 +120,11 @@ private:
   enum { file_stack_max = 10 };
   RecentFile recent_file_stack[file_stack_max];
   enum { file_stack_cmd_id = 2 };
+  HWND w_find_replace;
+  char find_what[200];
+  FINDREPLACEA fr;
+  bool replacing;
+  bool havefound;
 };
 
 const char* TideWindow::class_name = NULL;
@@ -143,6 +152,11 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   keywordlist = NULL;
   first_properties_read = true;
   pyro_menu = NULL;
+  w_find_replace = NULL;
+  find_what[0] = '\0';
+  memset(&fr, 0, sizeof(fr));
+  replacing = false;
+  havefound = false;
 
   read_global_prop_file();
 
@@ -788,6 +802,79 @@ void TideWindow::stack_menu(int pos) {
   }
 }
 
+void TideWindow::selection_into_find() {
+  int sel_start = 0;
+  int sel_end = 0;
+  int length_doc = length_document();
+  send_editor(EM_GETSEL, (WPARAM)&sel_start, (LPARAM)&sel_end);
+  if (sel_start == sel_end) {
+    // Try and find a word at the caret
+    if (isalnum(send_editor(SCI_GETCHARAT, sel_start))) {
+      while (sel_start > 0 && (isalnum(send_editor(SCI_GETCHARAT, sel_start - 1))))
+        sel_start--;
+      while (sel_end < length_doc - 1 && (isalnum(send_editor(SCI_GETCHARAT, sel_end + 1))))
+        sel_end++;
+      if (sel_start < sel_end)
+        sel_end++; // Because normal selections end one past
+    }
+  }
+  if (sel_start < sel_end && sel_end - sel_start < sizeof(find_what)) {
+    get_range(hwnd_editor, sel_start, sel_end - 1, find_what);
+    find_what[sel_end - sel_start] = '\0';
+  }
+}
+
+void TideWindow::find() {
+  if (w_find_replace)
+    return;
+  selection_into_find();
+
+  memset(&fr, 0, sizeof(fr));
+  fr.lStructSize = sizeof(fr);
+  fr.hwndOwner = hwnd_tide;
+  fr.hInstance = m_hinstance;
+  fr.Flags = FR_NOUPDOWN;
+  fr.lpstrFindWhat = find_what;
+  fr.wFindWhatLen = sizeof(find_what);
+  w_find_replace = FindTextA(&fr);
+  replacing = false;
+  current_dlg = w_find_replace;
+}
+
+void TideWindow::find_next() {
+  if (0 == fr.lpstrFindWhat) {
+    find();
+    return;
+  }
+  FINDTEXTEXA ft = { 0 };
+  ft.chrg.cpMin = send_editor(SCI_GETCURRENTPOS) + 1;
+  ft.chrg.cpMax = length_document();
+  ft.lpstrText = fr.lpstrFindWhat;
+  ft.chrgText.cpMin = 0;
+  ft.chrgText.cpMax = 0;
+  int pos_find = send_editor(EM_FINDTEXTEX, fr.Flags & (FR_WHOLEWORD | FR_MATCHCASE), (LPARAM)&ft);
+  if (pos_find == -1) {
+    havefound = false;
+    char msg[200] = { 0 };
+    strcpy(msg, "Cannot find the string \"");
+    strcat(msg, fr.lpstrFindWhat);
+    strcat(msg, "\".");
+    if (w_find_replace)
+      MessageBoxA(w_find_replace, msg, "Tide", MB_OK | MB_ICONWARNING);
+    else
+      MessageBoxA(hwnd_tide, msg, "Tide", MB_OK | MB_ICONWARNING);
+  }
+  else {
+    havefound = true;
+    send_editor(EM_SETSEL, ft.chrgText.cpMax + 1, ft.chrgText.cpMin);
+    if (w_find_replace && !replacing) {
+      EndDialog(w_find_replace, IDCANCEL);
+      w_find_replace = NULL;
+      current_dlg = NULL;
+    }
+  }
+}
+
 void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   switch (LOWORD(wparam)) {
   case IDM_NEW:
@@ -846,6 +933,9 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   case IDM_SELECTALL:
     send_editor(SCI_SELECTALL);
     break;
+  case IDM_FIND:
+    find();
+    break;
   case IDM_SRCWIN: {
     int cmd = HIWORD(wparam);
     if (cmd == EN_CHANGE) {
@@ -880,6 +970,27 @@ void TideWindow::move_split(POINT pt_new_drag) {
     size_sub_windows();
     InvalidateRect(hwnd_tide, NULL, TRUE);
     UpdateWindow(hwnd_tide);
+  }
+}
+
+void TideWindow::handle_find_replace() {
+  if (fr.Flags & FR_DIALOGTERM) {
+    w_find_replace = NULL;
+    current_dlg = NULL;
+    dprintf("Cancel FindReplace\n");
+  }
+  else if (fr.Flags & FR_FINDNEXT) {
+    dprintf("FindNext <%s> %x\n", fr.lpstrFindWhat, fr.Flags);
+    find_next();
+  }
+  else if (fr.Flags & FR_REPLACE) {
+    // TODO
+  }
+  else if (fr.Flags & FR_REPLACEALL) {
+    // TODO
+  }
+  else {
+    dprintf("Find/replace message %x\n", fr.Flags);
   }
 }
 
@@ -1003,7 +1114,12 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
     SetFocus(hwnd_editor);
     break;
   default:
-    return DefWindowProc(hwnd_tide, imsg, wparam, lparam);
+    if (imsg == RegisterWindowMessage(FINDMSGSTRING)) {
+      handle_find_replace();
+    }
+    else {
+      return DefWindowProc(hwnd_tide, imsg, wparam, lparam);
+    }
   }
 
   return 0l;
