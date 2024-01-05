@@ -1278,6 +1278,17 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     }
     break;
   }
+  case IDM_RUNWIN: {
+    int cmd = HIWORD(wparam);
+    if (cmd == SCN_STYLENEEDED) {
+      int end_pos_paint = lparam;
+      int end_styled = send_output(SCI_GETENDSTYLED);
+      int line_end_styled = send_output(EM_LINEFROMCHAR, end_styled);
+      end_styled = send_output(EM_LINEINDEX, line_end_styled);
+      colourise(end_styled, end_pos_paint, false);
+    }
+    break;
+  }
   default:
     break;
   }

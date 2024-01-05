@@ -218,10 +218,78 @@ static void colourise_cpp_doc(char* cdoc, int length_doc, int init_style, char**
   }
 }
 
+static void colourise_errorlist_line(char* line_buffer, int length_line, HWND hwnd) {
+  if (line_buffer[0] == '>') {
+    colour_seg_hwnd(hwnd, 0, length_line - 1, 4);
+  }
+  else if (strstr(line_buffer, "File \"") && strstr(line_buffer, ", line ")) {
+    colour_seg_hwnd(hwnd, 0, length_line - 1, 1);
+  }
+  else {
+    // Look for <filename>:<line>::message
+    int state = 0;
+    for (int i = 0; i < length_line; ++i) {
+      if (state == 0 && line_buffer[i] == ':' && isdigit(line_buffer[i + 1])) {
+        state = 1;
+      }
+      else if (state == 0 && line_buffer[i] == '(') {
+        state = 10;
+      }
+      else if (state == 1 && isdigit(line_buffer[i])) {
+        state = 2;
+      }
+      else if (state == 2 && line_buffer[i] == ':') {
+        state = 3;
+      }
+      else if (state == 2 && !isdigit(line_buffer[i])) {
+        state = 99;
+      }
+      else if (state == 10 && isdigit(line_buffer[i])) {
+        state = 11;
+      }
+      else if (state == 11 && line_buffer[i] == ')') {
+        state = 12;
+      }
+      else if (state == 12 && line_buffer[i] == ':') {
+        state = 13;
+      }
+      else if (state == 11 && !isdigit(line_buffer[i])) {
+        state = 99;
+      }
+    }
+    if (state == 3) {
+      colour_seg_hwnd(hwnd, 0, length_line - 1, 2);
+    }
+    else if (state == 13) {
+      colour_seg_hwnd(hwnd, 0, length_line - 1, 3);
+    }
+    else {
+      colour_seg_hwnd(hwnd, 0, length_line - 1, 0);
+    }
+  }
+}
+
+static void colourise_errorlist_doc(char* cdoc, int length_doc, int init_style, HWND hwnd) {
+  char line_buffer[1024] = { 0 };
+  int line_pos = 0;
+  for (int i = 0; i < length_doc; ++i) {
+    line_buffer[line_pos++] = cdoc[i];
+    if (cdoc[i] == '\r' || cdoc[i] == '\n' || line_pos >= sizeof(line_buffer) - 1) {
+      colourise_errorlist_line(line_buffer, line_pos, hwnd);
+      line_pos = 0;
+    }
+  }
+  if (line_pos > 0)
+    colourise_errorlist_line(line_buffer, line_pos, hwnd);
+}
+
 void colourise_doc(char* cdoc, int start_pos, int length_doc, int init_style, const char* language, char** keywords, HWND hwnd) {
   SendMessage(hwnd, SCI_STARTSTYLING, start_pos, 31);
   if (0 == strcmp(language, "cpp"))
     colourise_cpp_doc(cdoc, length_doc, init_style, keywords, hwnd);
+  else if (0 == strcmp(language, "errorlist"))
+    // 为什么 errorlist 所有文本还是黑色的？因为 IDM_RUNWIN 还没有处理
+    colourise_errorlist_doc(cdoc, length_doc, init_style, hwnd);
   else
     colour_seg_hwnd(hwnd, 0, length_doc, 0);
 }
