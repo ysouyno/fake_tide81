@@ -1119,6 +1119,7 @@ void TideWindow::process_execute() {
         int btest = ReadFile(hpipe_read, buffer, sizeof(buffer), &bytes_read, NULL);
         if (btest && bytes_read) {
           // Display the data
+          // 为什么这里输出的结果是错乱的，像是多个线程向同一个地方写入？
           output_append_string(buffer, bytes_read);
           UpdateWindow(hwnd_tide);
         }
