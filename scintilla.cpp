@@ -714,7 +714,7 @@ void Scintilla::paint() {
       rc_blank.top = ypos;
       rc_blank.bottom = ypos + line_height;
 
-      bool in_selection = pos_line_start > sel_start && pos_line_end < sel_end;
+      bool in_selection = pos_line_start > sel_start && pos_line_start < sel_end;
 
       SetTextAlign(hdc_show, TA_BASELINE);
 
