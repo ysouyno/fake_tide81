@@ -1866,6 +1866,8 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     paste();
     set_scroll_bars();
     break;
+  case WM_GETTEXTLENGTH:
+    return length();
   case EM_GETSEL:
   case EM_EXGETSEL:
     if (wparam)
@@ -2075,6 +2077,13 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     break;
   case SCI_GETCURRENTPOS:
     return current_pos;
+  case SCI_ADDTEXT:
+    insert_string(current_position(), (char*)lparam, wparam);
+    set_selection(current_pos + wparam, current_pos + wparam);
+    set_scroll_bars();
+    notify_change();
+    redraw();
+    return 0;
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:
   case SCI_LINEUP:

@@ -12,6 +12,7 @@
 #include <Richedit.h>
 #include <direct.h>
 #include <stdio.h>
+#include <process.h>
 
 #pragma warning(disable: 4996)
 
@@ -33,6 +34,93 @@ bool get_default_properties_filename(char* path_default_props, unsigned int len)
   }
 }
 
+// default_dlg, do_dialog is a bit like something in PC Magazine May 28, 1991, page 357
+// default_dlg is only used for about box
+int __stdcall default_dlg(HWND hdlg, WORD msg, WPARAM wparam, LPARAM lparam) {
+  switch (msg) {
+  case WM_INITDIALOG: {
+    HWND wsci = GetDlgItem(hdlg, IDABOUTSCINTILLA);
+    if (wsci) {
+      // TODO
+    }
+    return TRUE;
+  }
+  case WM_CLOSE:
+    SendMessage(hdlg, WM_COMMAND, IDCANCEL, NULL);
+    break;
+  case WM_COMMAND:
+    if (LOWORD(wparam) == IDOK) {
+      EndDialog(hdlg, IDOK);
+      return TRUE;
+    }
+    else if (LOWORD(wparam) == IDCANCEL) {
+      EndDialog(hdlg, IDCANCEL);
+      return FALSE;
+    }
+  }
+
+  return FALSE;
+}
+
+int __stdcall grep_dlg(HWND hdlg, WORD msg, WPARAM wparam, LPARAM lparam) {
+  static PropSet* props;
+  switch (msg) {
+  case WM_INITDIALOG:
+    props = (PropSet*)lparam;
+    SetDlgItemTextA(hdlg, IDFINDWHAT, props->get("find.what"));
+    SetDlgItemTextA(hdlg, IDFILES, props->get("find.files"));
+    return TRUE;
+  case WM_CLOSE:
+    SendMessage(hdlg, WM_COMMAND, IDCANCEL, NULL);
+    break;
+  case WM_COMMAND:
+    if (LOWORD(wparam) == IDCANCEL) {
+      EndDialog(hdlg, IDCANCEL);
+      return FALSE;
+    }
+    else if (LOWORD(wparam) == IDOK) {
+      char s[200] = { 0 };
+      GetDlgItemTextA(hdlg, IDFINDWHAT, s, sizeof(s));
+      props->set("find.what", s);
+      GetDlgItemTextA(hdlg, IDFILES, s, sizeof(s));
+      props->set("find.files", s);
+      EndDialog(hdlg, IDOK);
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+int do_dialog(HANDLE hinst, LPSTR lp_res_name, HWND hwnd, FARPROC lpproc, DWORD dw_init_param) {
+  int result = -1;
+
+  if (!lpproc)
+    lpproc = (FARPROC)default_dlg;
+
+  DLGPROC lpfn = (DLGPROC)MakeProcInstance(lpproc, hinst);
+  if (!lpfn) {
+    MessageBoxA(hwnd, "Failed to create proc instance.", "Tide", MB_OK);
+  }
+  else {
+    if (!dw_init_param)
+      result = DialogBoxA((HINSTANCE)hinst, lp_res_name, hwnd, lpfn);
+    else
+      result = DialogBoxParamA((HINSTANCE)hinst, lp_res_name, hwnd, lpfn, dw_init_param);
+
+    if (-1 == result) {
+      DWORD dwerror = GetLastError();
+      char errormsg[200] = { 0 };
+      sprintf(errormsg, "Failed to create Dialog box %d.", dwerror);
+      MessageBoxA(hwnd, errormsg, "Tide", MB_OK);
+    }
+
+    FreeProcInstance(lpfn);
+  }
+
+  return result;
+}
+
 class RecentFile {
 public:
   RecentFile() {
@@ -49,6 +137,7 @@ public:
   TideWindow(HINSTANCE, LPSTR);
   static void register_class(HINSTANCE);
   static LRESULT __stdcall twnd_proc(HWND, UINT, WPARAM, LPARAM);
+  void process_execute();
   HWND get_wnd() { return hwnd_tide; }
 
 private:
@@ -78,6 +167,10 @@ private:
   void selection_into_find();
   void find();
   void find_next();
+  void add_command(char*);
+  void output_append_string(char*, int len = -1);
+  void execute();
+  void find_in_files();
   void command(WPARAM, LPARAM);
   void move_split(POINT);
   void handle_find_replace();
@@ -107,6 +200,7 @@ private:
   char file_name[MAX_PATH];
   char file_ext[MAX_PATH];
   char dir_name[MAX_PATH];
+  char dir_name_at_execute[MAX_PATH];
   bool is_dirty;
   bool is_built;
   POINT pt_start_drag;
@@ -125,6 +219,11 @@ private:
   FINDREPLACEA fr;
   bool replacing;
   bool havefound;
+  enum { command_max = 2 };
+  int command_current;
+  char* command_to_execute[command_max];
+  long cancel_flag;
+  bool executing;
 };
 
 const char* TideWindow::class_name = NULL;
@@ -141,6 +240,7 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   file_name[0] = '\0';
   file_ext[0] = '\0';
   dir_name[0] = '\0';
+  dir_name_at_execute[0] = '\0';
   props.super_ps = &props_base;
   is_dirty = false;
   is_built = false;
@@ -157,6 +257,11 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   memset(&fr, 0, sizeof(fr));
   replacing = false;
   havefound = false;
+  command_current = 0;
+  for (int icmd = 0; icmd < command_max; ++icmd)
+    command_to_execute[icmd] = 0;
+  InterlockedExchange(&cancel_flag, 0L);
+  executing = false;
 
   read_global_prop_file();
 
@@ -875,6 +980,211 @@ void TideWindow::find_next() {
   }
 }
 
+void TideWindow::add_command(char* cmd) {
+  if (cmd) {
+    if (cmd[0]) {
+      command_to_execute[command_current] = cmd;
+      command_current++;
+    }
+    else {
+      free(cmd);
+    }
+  }
+}
+
+void TideWindow::output_append_string(char* s, int len) {
+  if (-1 == len)
+    len = strlen(s);
+  send_output(SCI_ADDTEXT, len, (LPARAM)s);
+  send_output(SCI_GOTOPOS, send_output(WM_GETTEXTLENGTH));
+}
+
+// process_execute runs a command with redirected input and output streams
+// so the output can be put in a window.
+// It is based upon several usenet posts and a knowledge base article.
+void TideWindow::process_execute() {
+  DWORD exitcode = 0;
+
+  send_output(SCI_GOTOPOS, send_output(WM_GETTEXTLENGTH));
+  int original_end = send_output(SCI_GETCURRENTPOS);
+
+  for (int icmd = 0; icmd < command_current && icmd < command_max && exitcode == 0; ++icmd) {
+    OSVERSIONINFOA osv = { sizeof(OSVERSIONINFOA) };
+    GetVersionExA(&osv);
+    bool windows95 = osv.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS;
+
+    SECURITY_ATTRIBUTES sa = { sizeof(SECURITY_ATTRIBUTES) };
+    PROCESS_INFORMATION pi = { 0 };
+    HANDLE hpipe_write = NULL;
+    HANDLE hpipe_read = NULL;
+    HANDLE hwrite2 = NULL;
+    HANDLE hread2 = NULL;
+    char buffer[256] = { 0 };
+    output_append_string((char*)">");
+    output_append_string(command_to_execute[icmd]);
+    output_append_string((char*)"\n");
+
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    SECURITY_DESCRIPTOR sd;
+    // If NT make a real security thing to allow inheriting handles
+    if (!windows95) {
+      InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
+      SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
+      sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+      sa.lpSecurityDescriptor = &sd;
+    }
+
+    // Create pipe for output redirection
+    CreatePipe(
+      &hpipe_read,
+      &hpipe_write,
+      &sa,
+      0
+    );
+
+    // Create pipe for input redirection.
+    // In this code, you do not redirect the output of the child process,
+    // but you need a handle to set the hStdInput field in the STARTUP_INFO
+    // struct. For safety, you should not set the handles to an invalid handle.
+    CreatePipe(
+      &hread2,
+      &hwrite2,
+      &sa,
+      0
+    );
+
+    // Make child process use hpipe_write as standard out, and make
+    // sure it does not show on screen.
+    STARTUPINFOA si = { sizeof(STARTUPINFOA) };
+    si.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+    si.wShowWindow = SW_HIDE;
+    si.hStdInput = hwrite2;
+    si.hStdOutput = hpipe_write;
+    si.hStdError = hpipe_write;
+
+    bool worked = CreateProcessA(
+      NULL,
+      command_to_execute[icmd],
+      NULL, NULL,
+      TRUE, 0,
+      NULL, NULL,
+      &si, &pi
+    );
+
+    if (!worked) {
+      output_append_string((char*)">Failed to CreateProcess\n");
+    }
+
+    // Now that this has been inherited, close it to be safe.
+    // You don't want to write to it accidentally
+    CloseHandle(hpipe_write);
+
+    bool completed = !worked;
+    DWORD time_detected_death = 0;
+    while (!completed) {
+      Sleep(100);
+
+      if (cancel_flag) {
+        TerminateProcess(pi.hProcess, 1);
+        completed = true;
+        break;
+      }
+
+      bool nt_or_data = true;
+      DWORD bytes_read = 0;
+
+      if (windows95) {
+        DWORD bytes_avail = 0;
+        if (PeekNamedPipe(hpipe_read, buffer, sizeof(buffer), &bytes_read, &bytes_avail, NULL)) {
+          if (0 == bytes_avail) {
+            nt_or_data = false;
+            DWORD dwexitcode = STILL_ACTIVE;
+            if (GetExitCodeProcess(pi.hProcess, &dwexitcode)) {
+              if (STILL_ACTIVE != dwexitcode) {
+                // Process is dead, but wait a second in case there is some output in transit
+                if (time_detected_death == 0)
+                  time_detected_death = timeGetTime();
+                else
+                  if (timeGetTime() - time_detected_death > 1000)
+                    completed = true; // It's a dead process
+              }
+            }
+          }
+        }
+      }
+
+      if (!completed && nt_or_data) {
+        int btest = ReadFile(hpipe_read, buffer, sizeof(buffer), &bytes_read, NULL);
+        if (btest && bytes_read) {
+          // Display the data
+          output_append_string(buffer, bytes_read);
+          UpdateWindow(hwnd_tide);
+        }
+        else
+          completed = true;
+      }
+    }
+
+    if (worked) {
+      WaitForSingleObject(pi.hProcess, INFINITE);
+      GetExitCodeProcess(pi.hProcess, &exitcode);
+      char exitmessage[80] = { 0 };
+      if (!exitcode)
+        is_built = true;
+      sprintf(exitmessage, ">Exit code: %d\n", exitcode);
+      output_append_string(exitmessage);
+      CloseHandle(pi.hProcess);
+    }
+
+    CloseHandle(hpipe_read);
+  }
+
+  // Move selection back to beginning of this run so that F4 will go
+  // to first error of this run.
+  send_output(SCI_GOTOPOS, original_end);
+  SendMessage(hwnd_tide, WM_COMMAND, IDM_FINISHEDEXECUTE, 0);
+}
+
+void exec_thread(void* ptw) {
+  TideWindow* tw = (TideWindow*)(ptw);
+  tw->process_execute();
+}
+
+void TideWindow::execute() {
+  send_output(SCI_MARKERDELETEALL, 0, 0);
+  send_editor(SCI_MARKERDELETEALL, 0, 0);
+  // Ensure the output pane is visible
+  if (height_output < 20) {
+    if (split_vertical)
+      height_output = normalise_split(300);
+    else
+      height_output = normalise_split(100);
+    size_sub_windows();
+    InvalidateRect(hwnd_tide, NULL, TRUE);
+    UpdateWindow(hwnd_tide);
+  }
+
+  InterlockedExchange(&cancel_flag, 0L);
+  executing = true;
+  chdir(dir_name);
+  strcpy(dir_name_at_execute, dir_name);
+  _beginthread(exec_thread, 1024 * 1024, (void*)this);
+}
+
+void TideWindow::find_in_files() {
+  selection_into_find();
+  props.set("find.what", find_what);
+  props.set("find.directory", ".");
+  if (do_dialog(m_hinstance, (LPSTR)"Grep", hwnd_tide, (FARPROC)grep_dlg, (DWORD)&props) == IDOK) {
+    dprintf("asked to find %s %s %s\n", props.get("find.what"), props.get("find.files"), props.get("find.directory"));
+    add_command(strdup(props.get_new_expand("find.command", "")));
+    if (command_current > 0)
+      execute();
+  }
+}
+
 void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   switch (LOWORD(wparam)) {
   case IDM_NEW:
@@ -938,6 +1248,17 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     break;
   case IDM_FINDNEXT:
     find_next();
+    break;
+  case IDM_FINDINFILES:
+    find_in_files();
+    break;
+  case IDM_FINISHEDEXECUTE:
+    executing = false;
+    for (int icmd = 0; icmd < command_max; ++icmd) {
+      free(command_to_execute[icmd]);
+      command_to_execute[icmd] = NULL;
+    }
+    command_current = 0;
     break;
   case IDM_SRCWIN: {
     int cmd = HIWORD(wparam);
