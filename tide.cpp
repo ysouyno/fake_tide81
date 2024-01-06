@@ -171,6 +171,7 @@ private:
   void output_append_string(char*, int len = -1);
   void execute();
   void find_in_files();
+  void replace();
   void command(WPARAM, LPARAM);
   void move_split(POINT);
   void handle_find_replace();
@@ -216,6 +217,7 @@ private:
   enum { file_stack_cmd_id = 2 };
   HWND w_find_replace;
   char find_what[200];
+  char replace_what[200];
   FINDREPLACEA fr;
   bool replacing;
   bool havefound;
@@ -254,6 +256,7 @@ TideWindow::TideWindow(HINSTANCE h, LPSTR cmd) {
   pyro_menu = NULL;
   w_find_replace = NULL;
   find_what[0] = '\0';
+  replace_what[0] = '\0';
   memset(&fr, 0, sizeof(fr));
   replacing = false;
   havefound = false;
@@ -1186,6 +1189,26 @@ void TideWindow::find_in_files() {
   }
 }
 
+void TideWindow::replace() {
+  if (w_find_replace)
+    return;
+  selection_into_find();
+
+  memset(&fr, 0, sizeof(fr));
+  fr.lStructSize = sizeof(fr);
+  fr.hwndOwner = hwnd_tide;
+  fr.hInstance = m_hinstance;
+  fr.Flags = FR_REPLACE;
+  fr.lpstrFindWhat = find_what;
+  fr.lpstrReplaceWith = replace_what;
+  fr.wFindWhatLen = sizeof(find_what);
+  fr.wReplaceWithLen = sizeof(replace_what);
+  w_find_replace = ReplaceTextA(&fr);
+  replacing = true;
+  havefound = false;
+  current_dlg = w_find_replace;
+}
+
 void TideWindow::command(WPARAM wparam, LPARAM lparam) {
   switch (LOWORD(wparam)) {
   case IDM_NEW:
@@ -1252,6 +1275,9 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     break;
   case IDM_FINDINFILES:
     find_in_files();
+    break;
+  case IDM_REPLACE:
+    replace();
     break;
   case IDM_FINISHEDEXECUTE:
     executing = false;
@@ -1320,10 +1346,38 @@ void TideWindow::handle_find_replace() {
     find_next();
   }
   else if (fr.Flags & FR_REPLACE) {
-    // TODO
+    if (havefound) {
+      send_editor(EM_REPLACESEL, 0, (LPARAM)fr.lpstrReplaceWith);
+      havefound = false;
+      dprintf("Replace <%s> -> <%s>\n", fr.lpstrFindWhat, fr.lpstrReplaceWith);
+    }
+    find_next();
   }
   else if (fr.Flags & FR_REPLACEALL) {
-    // TODO
+    FINDTEXTEXA ft;
+    ft.chrg.cpMin = 0;
+    ft.chrg.cpMax = length_document();
+    ft.lpstrText = fr.lpstrFindWhat;
+    ft.chrgText.cpMin = 0;
+    ft.chrgText.cpMax = 0;
+    int pos_find = send_editor(EM_FINDTEXTEX, fr.Flags & (FR_WHOLEWORD | FR_MATCHCASE), (LPARAM)&ft);
+    if (-1 != pos_find) {
+      while (-1 != pos_find) {
+        send_editor(EM_SETSEL, ft.chrgText.cpMax + 1, ft.chrgText.cpMin);
+        send_editor(EM_REPLACESEL, 0, (LPARAM)fr.lpstrReplaceWith);
+        ft.chrg.cpMin = pos_find + strlen(fr.lpstrReplaceWith) + 1;
+        ft.chrg.cpMax = length_document();
+        pos_find = send_editor(EM_FINDTEXTEX, fr.Flags & (FR_WHOLEWORD | FR_MATCHCASE), (LPARAM)&ft);
+      }
+    }
+    else {
+      char msg[200] = { 0 };
+      strcpy(msg, "No replacements because string \"");
+      strcat(msg, fr.lpstrFindWhat);
+      strcat(msg, "\" was not present.");
+      MessageBoxA(w_find_replace, msg, "Tide", MB_OK | MB_ICONWARNING);
+    }
+    dprintf("ReplaceAll <%s> -> <%s>\n", fr.lpstrFindWhat, fr.lpstrReplaceWith);
   }
   else {
     dprintf("Find/replace message %x\n", fr.Flags);
