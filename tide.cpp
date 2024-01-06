@@ -177,11 +177,11 @@ private:
   long wnd_proc(WORD, WPARAM, LPARAM);
 
   LRESULT send_editor(UINT msg, WPARAM wparam = 0, LPARAM lparam = 0) {
-    return SendMessage(hwnd_editor, msg, wparam, lparam);
+    return SendMessageA(hwnd_editor, msg, wparam, lparam);
   }
 
   LRESULT send_output(UINT msg, WPARAM wparam = 0, LPARAM lparam = 0) {
-    return SendMessage(hwnd_output, msg, wparam, lparam);
+    return SendMessageA(hwnd_output, msg, wparam, lparam);
   }
 
 private:
