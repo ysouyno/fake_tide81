@@ -1322,6 +1322,12 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     size_sub_windows();
     InvalidateRect(hwnd_tide, NULL, TRUE);
     break;
+  case IDM_VIEWSPACE: {
+    int view_ws = send_editor(SCI_GETVIEWWS, 0, 0);
+    send_editor(SCI_SETVIEWWS, !view_ws);
+    InvalidateRect(hwnd_editor, NULL, TRUE);
+    break;
+  }
   case IDM_FINISHEDEXECUTE:
     executing = false;
     for (int icmd = 0; icmd < command_max; ++icmd) {

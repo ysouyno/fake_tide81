@@ -2084,6 +2084,11 @@ long Scintilla::wnd_proc(WORD msg, WPARAM wparam, LPARAM lparam) {
     notify_change();
     redraw();
     return 0;
+  case SCI_GETVIEWWS:
+    return view_whitespace;
+  case SCI_SETVIEWWS:
+    view_whitespace = wparam;
+    break;
   case SCI_LINEDOWN:
   case SCI_LINEDOWNEXTEND:
   case SCI_LINEUP:
