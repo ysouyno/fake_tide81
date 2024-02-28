@@ -92,6 +92,32 @@ int __stdcall grep_dlg(HWND hdlg, WORD msg, WPARAM wparam, LPARAM lparam) {
   return FALSE;
 }
 
+int __stdcall go_line_dlg(HWND hdlg, WORD msg, WPARAM wparam, LPARAM lparam) {
+  static int* pline_no;
+  switch (msg) {
+  case WM_INITDIALOG:
+    pline_no = (int*)lparam;
+    return TRUE;
+  case WM_CLOSE:
+    SendMessage(hdlg, WM_COMMAND, IDCANCEL, NULL);
+    break;
+  case WM_COMMAND:
+    if (LOWORD(wparam) == IDCANCEL) {
+      EndDialog(hdlg, IDCANCEL);
+      return FALSE;
+    }
+    else if (LOWORD(wparam) == IDOK) {
+      char line_no[200] = { 0 };
+      GetDlgItemTextA(hdlg, IDGOLINE, line_no, sizeof(line_no));
+      sscanf(line_no, "%d", pline_no);
+      EndDialog(hdlg, IDOK);
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
 int do_dialog(HANDLE hinst, LPSTR lp_res_name, HWND hwnd, FARPROC lpproc, DWORD dw_init_param) {
   int result = -1;
 
@@ -1210,6 +1236,8 @@ void TideWindow::replace() {
 }
 
 void TideWindow::command(WPARAM wparam, LPARAM lparam) {
+  int line_no = 0;
+
   switch (LOWORD(wparam)) {
   case IDM_NEW:
     if (save_if_unsure() != IDCANCEL) {
@@ -1278,6 +1306,12 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     break;
   case IDM_REPLACE:
     replace();
+    break;
+  case IDM_GOTO:
+    if (do_dialog(m_hinstance, (LPSTR)"GoLine", hwnd_tide, (FARPROC)go_line_dlg, (DWORD)&line_no) == IDOK) {
+      send_editor(SCI_GOTOLINE, line_no);
+    }
+    SetFocus(hwnd_editor);
     break;
   case IDM_FINISHEDEXECUTE:
     executing = false;
