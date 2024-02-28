@@ -201,6 +201,9 @@ private:
   void command(WPARAM, LPARAM);
   void move_split(POINT);
   void handle_find_replace();
+  void check_a_menu_item(HWND, WORD, BOOL);
+  void enable_a_menu_item(HWND, WORD, BOOL);
+  void check_menus();
   long wnd_proc(WORD, WPARAM, LPARAM);
 
   LRESULT send_editor(UINT msg, WPARAM wparam = 0, LPARAM lparam = 0) {
@@ -1313,6 +1316,12 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     }
     SetFocus(hwnd_editor);
     break;
+  case IDM_VERTICALSPLIT:
+    split_vertical = !split_vertical;
+    height_output = normalise_split(height_output);
+    size_sub_windows();
+    InvalidateRect(hwnd_tide, NULL, TRUE);
+    break;
   case IDM_FINISHEDEXECUTE:
     executing = false;
     for (int icmd = 0; icmd < command_max; ++icmd) {
@@ -1416,6 +1425,34 @@ void TideWindow::handle_find_replace() {
   else {
     dprintf("Find/replace message %x\n", fr.Flags);
   }
+}
+
+void TideWindow::check_a_menu_item(HWND hwnd, WORD w_id_check_item, BOOL val) {
+  if (val)
+    CheckMenuItem(GetMenu(hwnd), w_id_check_item, MF_BYCOMMAND | MF_CHECKED);
+  else
+    CheckMenuItem(GetMenu(hwnd), w_id_check_item, MF_BYCOMMAND | MF_UNCHECKED);
+}
+
+void TideWindow::enable_a_menu_item(HWND hwnd, WORD w_id_check_item, BOOL val) {
+  if (val)
+    EnableMenuItem(GetMenu(hwnd), w_id_check_item, MF_BYCOMMAND | MF_ENABLED);
+  else
+    EnableMenuItem(GetMenu(hwnd), w_id_check_item, MF_BYCOMMAND | MF_DISABLED | MF_GRAYED);
+}
+
+void TideWindow::check_menus() {
+  enable_a_menu_item(hwnd_tide, IDM_SAVE, is_dirty);
+  enable_a_menu_item(hwnd_tide, IDM_UNDO, send_editor(EM_CANUNDO));
+  enable_a_menu_item(hwnd_tide, IDM_PASTE, send_editor(EM_CANPASTE));
+  check_a_menu_item(hwnd_tide, IDM_VERTICALSPLIT, split_vertical);
+  // check_a_menu_item(hwnd_tide, IDM_VIEWSPACE, send_editor(SCI_GETVIEWWS)); // TODO
+  // check_a_menu_item(hwnd_tide, IDM_SELECTIONMARGIN, sel_margin); // TODO
+  // check_a_menu_item(hwnd_tide, IDM_BUFFEREDDRAW, buffered_draw); // TODO
+  enable_a_menu_item(hwnd_tide, IDM_COMPILE, !executing);
+  enable_a_menu_item(hwnd_tide, IDM_BUILD, !executing);
+  enable_a_menu_item(hwnd_tide, IDM_GO, !executing);
+  enable_a_menu_item(hwnd_tide, IDM_STOPEXECUE, executing);
 }
 
 long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
@@ -1522,6 +1559,9 @@ long TideWindow::wnd_proc(WORD imsg, WPARAM wparam, LPARAM lparam) {
     break;
   case WM_SETTEXT:
     return DefWindowProcA(hwnd_tide, imsg, wparam, lparam);
+  case WM_INITMENU:
+    check_menus();
+    break;
   case WM_DESTROY:
     if (hwnd_editor)
       DestroyWindow(hwnd_editor);
