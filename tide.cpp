@@ -34,6 +34,16 @@ bool get_default_properties_filename(char* path_default_props, unsigned int len)
   }
 }
 
+void add_styled_text(HWND hwnd, const char* s, int attr) {
+  char buf[100] = { 0 };
+  int len = strlen(s);
+  for (int i = 0; i < len; ++i) {
+    buf[i * 2] = s[i];
+    buf[i * 2 + 1] = attr;
+  }
+  SendMessage(hwnd, SCI_ADDSTYLEDTEXT, len * 2, (LPARAM)buf);
+}
+
 // default_dlg, do_dialog is a bit like something in PC Magazine May 28, 1991, page 357
 // default_dlg is only used for about box
 int __stdcall default_dlg(HWND hdlg, WORD msg, WPARAM wparam, LPARAM lparam) {
@@ -41,7 +51,29 @@ int __stdcall default_dlg(HWND hdlg, WORD msg, WPARAM wparam, LPARAM lparam) {
   case WM_INITDIALOG: {
     HWND wsci = GetDlgItem(hdlg, IDABOUTSCINTILLA);
     if (wsci) {
-      // TODO
+      SendMessage(wsci, SCI_SETBACK, RGB(0, 0, 0), 0);
+      SendMessage(wsci, EM_SETREADONLY, 0, 0);
+      add_styled_text(wsci, "Tide\n", 0);
+      SendMessage(wsci, SCI_STYLESETFORE, 0, RGB(0xff, 0xff, 0xff));
+      SendMessage(wsci, SCI_STYLESETBACK, 0, RGB(0, 0, 0x80));
+      SendMessage(wsci, SCI_STYLESETSIZE, 0, 22);
+      add_styled_text(wsci, "Version 0.81\n", 1);
+      SendMessage(wsci, SCI_STYLESETFORE, 1, RGB(0xff, 0xff, 0xff));
+      SendMessage(wsci, SCI_STYLESETBACK, 1, RGB(0, 0, 0x80));
+      SendMessage(wsci, SCI_STYLESETSIZE, 1, 12);
+      add_styled_text(wsci, "by Neil Hodgson.\n", 2);
+      SendMessage(wsci, SCI_STYLESETFORE, 2, RGB(0xff, 0xff, 0xff));
+      SendMessage(wsci, SCI_STYLESETBACK, 2, RGB(0, 0, 0x80));
+      SendMessage(wsci, SCI_STYLESETSIZE, 2, 12);
+      SendMessage(wsci, SCI_STYLESETITALIC, 2, 1);
+      add_styled_text(wsci, "December 1998 - March 1999.\n", 3);
+      SendMessage(wsci, SCI_STYLESETFORE, 3, RGB(0xff, 0xff, 0xff));
+      SendMessage(wsci, SCI_STYLESETBACK, 3, RGB(0, 0, 0x80));
+      SendMessage(wsci, SCI_STYLESETSIZE, 3, 12);
+      add_styled_text(wsci, "http://hare.net.au/~neilh/ScintillaTide.html", 4);
+      SendMessage(wsci, SCI_STYLESETFORE, 4, RGB(0, 0xff, 0xff));
+      SendMessage(wsci, SCI_STYLESETBACK, 4, RGB(0, 0, 0x80));
+      SendMessage(wsci, SCI_STYLESETSIZE, 4, 9);
     }
     return TRUE;
   }
@@ -1328,6 +1360,10 @@ void TideWindow::command(WPARAM wparam, LPARAM lparam) {
     InvalidateRect(hwnd_editor, NULL, TRUE);
     break;
   }
+  case IDM_ABOUT:
+    do_dialog(m_hinstance, (LPSTR)"About", hwnd_tide, NULL, NULL);
+    SetFocus(hwnd_editor);
+    break;
   case IDM_FINISHEDEXECUTE:
     executing = false;
     for (int icmd = 0; icmd < command_max; ++icmd) {

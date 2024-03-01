@@ -1,6 +1,6 @@
 #pragma once
 
-#define IDABOUTSCINTILLA 221
+// #define IDABOUTSCINTILLA 221
 
 #define IDM_TABTIMMY 240
 // #define IDM_STEP 241
